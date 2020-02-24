@@ -2,6 +2,7 @@
 #include <uthash.h>
 #include <limits.h>
 #include <errno.h>
+#include <assert.h>
 
 struct config_key_value
 {
@@ -94,12 +95,16 @@ extern int destroy_config(struct config* conf)
     return ERROR_SUCCESS;
 }
 
-void set_config_value(const char* key, const char* value, struct config* conf)
+int set_config_value(const char* key, const char* value, struct config* conf)
 {
     struct config_key_value* val = NULL;
     HASH_FIND_STR(conf->hmap, key, val);
     if (val==NULL) {
         val = malloc(sizeof(struct config_key_value));
+        if(val == NULL)
+        {
+            return ERROR_NOMEM;
+        }
         val->key = strdup(key);
         HASH_ADD_STR( conf->hmap, key, val );
     }
@@ -108,6 +113,7 @@ void set_config_value(const char* key, const char* value, struct config* conf)
         free(val->value);
     }
     val->value = strdup(value);
+    return ERROR_SUCCESS;
 }
 
 const char* get_config_value(const char* key, const struct config* conf)

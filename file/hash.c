@@ -20,7 +20,15 @@ int hash(const char* file, const char* digest, unsigned char* ret)
     }
 
     mdctx = EVP_MD_CTX_new();
-    EVP_DigestInit_ex(mdctx, md, NULL);
+    if(mdctx == NULL)
+    {
+        return ERROR_NOMEM;
+    }
+    if(EVP_DigestInit_ex(mdctx, md, NULL) == 0)
+    {
+        EVP_MD_CTX_free(mdctx);
+        return ERROR_CRYPTO;
+    }
 
     FILE* src = fopen(file, "r");
     if(src == NULL)
@@ -34,7 +42,12 @@ int hash(const char* file, const char* digest, unsigned char* ret)
     size_t len;
     while((len = fread(buf, sizeof(*buf), sizeof(buf) / sizeof(*buf), src)))
     {
-        EVP_DigestUpdate(mdctx, buf, len);
+        if(EVP_DigestUpdate(mdctx, buf, len) == 0)
+        {
+            EVP_MD_CTX_free(mdctx);
+            fclose(src);
+            return ERROR_CRYPTO;
+        }
     }
 
     if(ferror(src))
@@ -44,12 +57,19 @@ int hash(const char* file, const char* digest, unsigned char* ret)
         return ERROR_SYSTEM;
     }
 
-    EVP_DigestFinal_ex(mdctx, md_value, &md_len);
+    if(EVP_DigestFinal_ex(mdctx, md_value, &md_len) == 0)
+    {
+        EVP_MD_CTX_free(mdctx);
+        fclose(src);
+        return ERROR_CRYPTO;
+    }
+
     EVP_MD_CTX_free(mdctx);
+    fclose(src);
 
     memcpy(ret, md_value, md_len);
 
-    return 0;
+    return ERROR_SUCCESS;
 }
 
 extern int hash_size(const char* digest)

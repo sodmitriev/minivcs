@@ -1,4 +1,5 @@
 #include "hash.h"
+#include "encode.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -35,5 +36,22 @@ int main()
     assert(memcmp(hash1, hash2, sizeof(hash1)) != 0);
     unlink("testfile1");
     unlink("testfile2");
+
+    char b64hash1[encoded_size(sizeof(hash1))];
+    char b64hash2[encoded_size(sizeof(hash2))];
+    memset(b64hash1, 1, sizeof(b64hash1));
+    memset(b64hash2, 1, sizeof(b64hash2));
+    err = encode(hash1, sizeof(hash1), b64hash1);
+    if(err != ERROR_SUCCESS)
+    {
+        abort();
+    }
+    err = encode(hash2, sizeof(hash2), b64hash2);
+    if(err != ERROR_SUCCESS)
+    {
+        abort();
+    }
+    assert(memcmp(b64hash1, b64hash2, sizeof(hash1)) != 0);
+
     return 0;
 }

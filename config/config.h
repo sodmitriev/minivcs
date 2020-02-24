@@ -22,7 +22,7 @@ extern int destroy_config(struct config* conf);
 
 
 
-extern void set_config_value(const char* key, const char* value, struct config* conf);
+extern int set_config_value(const char* key, const char* value, struct config* conf);
 
 extern const char* get_config_value(const char* key, const struct config* conf);
 
