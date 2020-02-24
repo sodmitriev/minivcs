@@ -5,6 +5,6 @@
 #define ERROR_SYSTEM 1
 #define ERROR_NOTFOUND 2
 #define ERROR_CRYPTO 3
-#define ERROR_NOMEM 4
+#define ERROR_MODE 4
 
 #endif //MINIVCS_EC_H

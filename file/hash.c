@@ -22,7 +22,7 @@ int hash(const char* file, const char* digest, unsigned char* ret)
     mdctx = EVP_MD_CTX_new();
     if(mdctx == NULL)
     {
-        return ERROR_NOMEM;
+        return ERROR_SYSTEM;
     }
     if(EVP_DigestInit_ex(mdctx, md, NULL) == 0)
     {
