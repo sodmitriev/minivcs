@@ -57,7 +57,7 @@ int load_config(const char* path, struct config* conf)
         }
         set_config_value(line, val_start, conf);
     }
-    return errno == 0 ? ERROR_SUCCESS : ERROR_SYSTEM;
+    return ferror(file) == 0 ? ERROR_SUCCESS : ERROR_SYSTEM;
 }
 
 int save_config(struct config* conf)
