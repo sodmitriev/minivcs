@@ -2,6 +2,7 @@
 #include <openssl/evp.h>
 #include <ec.h>
 #include <string.h>
+#include <assert.h>
 
 #define BUFFER_SIZE 512
 
@@ -72,9 +73,9 @@ int hash(const char* file, const char* digest, unsigned char* ret)
     return ERROR_SUCCESS;
 }
 
-extern int hash_size(const char* digest)
+extern int hash_size(const char* digest, size_t* out)
 {
-
+    assert(out);
     const EVP_MD *md;
 
     md = EVP_get_digestbyname(digest);
@@ -83,6 +84,6 @@ extern int hash_size(const char* digest)
     {
         return ERROR_NOTFOUND;
     }
-
-    return EVP_MD_size(md);
+    *out = EVP_MD_size(md);
+    return ERROR_SUCCESS;
 }

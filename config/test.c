@@ -6,15 +6,15 @@
 int main()
 {
     struct config conf;
-    if(init_config("myconf", &conf) != ERROR_SUCCESS)
+    if(config_init("myconf", &conf) != ERROR_SUCCESS)
     {
         abort();
     }
-    set_config_value("testkey", "testval", &conf);
-    set_config_value("1", "2", &conf);
-    set_config_value("3", "4", &conf);
-    set_config_value("1", "5", &conf);
-    const char* val = get_config_value("testkey", &conf);
+    config_set("testkey", "testval", &conf);
+    config_set("1", "2", &conf);
+    config_set("3", "4", &conf);
+    config_set("1", "5", &conf);
+    const char* val = config_get("testkey", &conf);
     if(val == NULL)
     {
         abort();
@@ -23,19 +23,19 @@ int main()
     {
         abort();
     }
-    if(save_config(&conf) != ERROR_SUCCESS)
+    if(config_save(&conf) != ERROR_SUCCESS)
     {
         abort();
     }
-    if(destroy_config(&conf) != ERROR_SUCCESS)
+    if(config_destroy(&conf) != ERROR_SUCCESS)
     {
         abort();
     }
-    if(load_config("myconf", &conf) != ERROR_SUCCESS)
+    if(config_load("myconf", &conf) != ERROR_SUCCESS)
     {
         abort();
     }
-    val = get_config_value("testkey", &conf);
+    val = config_get("testkey", &conf);
     if(val == NULL)
     {
         abort();
@@ -44,7 +44,7 @@ int main()
     {
         abort();
     }
-    val = get_config_value("1", &conf);
+    val = config_get("1", &conf);
     if(val == NULL)
     {
         abort();
@@ -53,7 +53,7 @@ int main()
     {
         abort();
     }
-    val = get_config_value("3", &conf);
+    val = config_get("3", &conf);
     if(val == NULL)
     {
         abort();
@@ -62,19 +62,19 @@ int main()
     {
         abort();
     }
-    val = get_config_value("2", &conf);
+    val = config_get("2", &conf);
     if(val != NULL)
     {
         abort();
     }
-    set_config_value("2", "6", &conf);
-    save_config(&conf);
-    destroy_config(&conf);
-    if(load_config("myconf", &conf) != ERROR_SUCCESS)
+    config_set("2", "6", &conf);
+    config_save(&conf);
+    config_destroy(&conf);
+    if(config_load("myconf", &conf) != ERROR_SUCCESS)
     {
         abort();
     }
-    val = get_config_value("testkey", &conf);
+    val = config_get("testkey", &conf);
     if(val == NULL)
     {
         abort();
@@ -83,7 +83,7 @@ int main()
     {
         abort();
     }
-    val = get_config_value("1", &conf);
+    val = config_get("1", &conf);
     if(val == NULL)
     {
         abort();
@@ -92,7 +92,7 @@ int main()
     {
         abort();
     }
-    val = get_config_value("3", &conf);
+    val = config_get("3", &conf);
     if(val == NULL)
     {
         abort();
@@ -101,7 +101,7 @@ int main()
     {
         abort();
     }
-    val = get_config_value("2", &conf);
+    val = config_get("2", &conf);
     if(val == NULL)
     {
         abort();
@@ -110,6 +110,6 @@ int main()
     {
         abort();
     }
-    destroy_config(&conf);
+    config_destroy(&conf);
     return 0;
 }

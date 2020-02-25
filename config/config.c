@@ -1,8 +1,7 @@
 #include "config.h"
+#include <ec.h>
 #include <uthash.h>
 #include <limits.h>
-#include <errno.h>
-#include <assert.h>
 
 struct config_key_value
 {
@@ -11,7 +10,7 @@ struct config_key_value
     UT_hash_handle hh;
 };
 
-int init_config(const char* path, struct config* conf)
+int config_init(const char* path, struct config* conf)
 {
     FILE* file = fopen(path, "w");
     if(file == NULL)
@@ -23,7 +22,7 @@ int init_config(const char* path, struct config* conf)
     return ERROR_SUCCESS;
 }
 
-int load_config(const char* path, struct config* conf)
+int config_load(const char* path, struct config* conf)
 {
     FILE* file = fopen(path, "r+");
     if(file == NULL)
@@ -56,12 +55,12 @@ int load_config(const char* path, struct config* conf)
         {
             *val_end = '\0';
         }
-        set_config_value(line, val_start, conf);
+        config_set(line, val_start, conf);
     }
     return ferror(file) == 0 ? ERROR_SUCCESS : ERROR_SYSTEM;
 }
 
-int save_config(struct config* conf)
+int config_save(struct config* conf)
 {
     if (fseek(conf->file, 0, SEEK_SET) < 0)
     {
@@ -78,7 +77,7 @@ int save_config(struct config* conf)
     return ERROR_SUCCESS;
 }
 
-extern int destroy_config(struct config* conf)
+extern int config_destroy(struct config* conf)
 {
     struct config_key_value *val, *tmp;
     HASH_ITER(hh, conf->hmap, val, tmp) {
@@ -95,7 +94,7 @@ extern int destroy_config(struct config* conf)
     return ERROR_SUCCESS;
 }
 
-int set_config_value(const char* key, const char* value, struct config* conf)
+int config_set(const char* key, const char* value, struct config* conf)
 {
     struct config_key_value* val = NULL;
     HASH_FIND_STR(conf->hmap, key, val);
@@ -103,20 +102,38 @@ int set_config_value(const char* key, const char* value, struct config* conf)
         val = malloc(sizeof(struct config_key_value));
         if(val == NULL)
         {
-            return ERROR_NOMEM;
+            return ERROR_SYSTEM;
         }
         val->key = strdup(key);
+        if(!val->key)
+        {
+            free(val);
+            return ERROR_SYSTEM;
+        }
+        val->value = strdup(value);
+        if(!val->value)
+        {
+            free(val->key);
+            free(val);
+            return ERROR_SYSTEM;
+        }
         HASH_ADD_STR( conf->hmap, key, val );
     }
     else
     {
-        free(val->value);
+        char* tmp = val->value;
+        val->value = strdup(value);
+        if(!val->value)
+        {
+            val->value = tmp;
+            return ERROR_SYSTEM;
+        }
+        free(tmp);
     }
-    val->value = strdup(value);
     return ERROR_SUCCESS;
 }
 
-const char* get_config_value(const char* key, const struct config* conf)
+const char* config_get(const char* key, const struct config* conf)
 {
     struct config_key_value* val = NULL;
     HASH_FIND_STR(conf->hmap, key, val);

@@ -6,5 +6,6 @@
 #define ERROR_NOTFOUND 2
 #define ERROR_CRYPTO 3
 #define ERROR_MODE 4
+#define ERROR_CONFIG 5
 
 #endif //MINIVCS_EC_H
