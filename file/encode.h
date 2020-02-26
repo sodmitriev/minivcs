@@ -2,6 +2,8 @@
 #define MINIVCS_ENCODE_H
 
 #include <stddef.h>
+#include <stdlib.h>
+#include <ec.h>
 
 extern int encode(const char* src, size_t size, char* dest);
 

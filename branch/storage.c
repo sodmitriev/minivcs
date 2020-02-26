@@ -1,7 +1,7 @@
-#ifndef MINIVCS_CP_H
-#define MINIVCS_CP_H
-
+#include "storage.h"
+#include <ec.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
 
@@ -64,4 +64,33 @@ int cp(const char *to, const char *from)
     return -1;
 }
 
-#endif //MINIVCS_CP_H
+int store_file(const char* storage, const char* path)
+{
+    if(cp(storage, path) == -1)
+    {
+        return ERROR_SYSTEM;
+    }
+    return ERROR_SUCCESS;
+}
+
+int restore_file(const char* storage, const char* path)
+{
+    if(rename(storage, path) == 0)
+    {
+        return ERROR_SUCCESS;
+    }
+    if(cp(path, storage) == -1)
+    {
+        return ERROR_SYSTEM;
+    }
+    return ERROR_SUCCESS;
+}
+
+int reset_storage(const char* storage)
+{
+    if(unlink(storage) < 0)
+    {
+        return ERROR_SYSTEM;
+    }
+    return ERROR_SUCCESS;
+}

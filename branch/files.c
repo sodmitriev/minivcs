@@ -1,4 +1,6 @@
 #include "files.h"
+#include "storage.h"
+#include "name.h"
 #include <file/hash.h>
 #include <ec.h>
 #include <uthash.h>
@@ -7,7 +9,8 @@
 #include <limits.h>
 #include <sys/random.h>
 #include <dirent.h>
-#include "cp.h"
+#include <errno.h>
+#include <zconf.h>
 
 struct file_info
 {
@@ -29,27 +32,6 @@ struct file_index_value_by_name
     struct file_info* value;
     UT_hash_handle hh;
 };
-
-static void to_file_name(char* name)
-{
-    for(char* replace = strchr(name, '/'); replace != NULL; replace = strchr(replace + 1, '/'))
-    {
-        *replace = '_';
-    }
-}
-
-extern int file_name_readable(const unsigned char* name, size_t size, char** readable)
-{
-    int err;
-    ENCODE(name, size, err);
-    if(err != ERROR_SUCCESS)
-    {
-        return err;
-    }
-    to_file_name(name_encoded);
-    *readable = name_encoded;
-    return ERROR_SUCCESS;
-}
 
 static int gen_unique_name(const struct file_index* index, unsigned char** name)
 {
@@ -104,11 +86,7 @@ static int file_index_init_mode(const struct config* conf, struct file_index* in
         return ERROR_CONFIG;
     }
 
-    int err = hash_size(digest, &index->hash_size);
-    if(err != ERROR_SUCCESS)
-    {
-        return err;
-    }
+    index->digest = digest;
     FILE* file = fopen(path, mode);
     if(!file)
     {
@@ -129,7 +107,13 @@ static int file_index_insert_prepared(const unsigned char* hash, const unsigned 
     assert(index);
 
     int err;
-    ENCODE(hash, index->hash_size, err);
+    size_t hsize;
+    err = hash_size(index->digest, &hsize);
+    if(err != ERROR_SUCCESS)
+    {
+        return err;
+    }
+    ENCODE(hash, hsize, err);
     if(err != ERROR_SUCCESS)
     {
         return err;
@@ -151,7 +135,7 @@ static int file_index_insert_prepared(const unsigned char* hash, const unsigned 
         return ERROR_SYSTEM;
     }
 
-    info->hash = malloc(index->hash_size);
+    info->hash = malloc(hsize);
     if(!info->hash)
     {
         free(hash_encoded);
@@ -159,7 +143,7 @@ static int file_index_insert_prepared(const unsigned char* hash, const unsigned 
         free(info);
         return ERROR_SYSTEM;
     }
-    memcpy(info->hash, hash, index->hash_size);
+    memcpy(info->hash, hash, hsize);
 
     info->name = malloc(index->name_size);
     if(!info->name)
@@ -235,7 +219,14 @@ int file_index_open(const struct config* conf, struct file_index* index)
     {
         return err;
     }
-    const size_t row_size = index->hash_size + index->name_size + sizeof(((struct file_info*)(0))->ref_count);
+    size_t hsize;
+    err = hash_size(index->digest, &hsize);
+    if(err != ERROR_SUCCESS)
+    {
+        file_index_destroy(index);
+        return err;
+    }
+    const size_t row_size = hsize + index->name_size + sizeof(((struct file_info*)(0))->ref_count);
     unsigned char* buf = malloc(row_size);
     if(!buf)
     {
@@ -245,9 +236,9 @@ int file_index_open(const struct config* conf, struct file_index* index)
     while(fread(buf, 1, row_size, index->file) == row_size)
     {
         size_t ref;
-        memcpy(&ref, buf + index->hash_size + index->name_size, sizeof(ref));
+        memcpy(&ref, buf + hsize + index->name_size, sizeof(ref));
         struct file_info* info;
-        err = file_index_insert_prepared(buf, buf + index->hash_size, index, &info);
+        err = file_index_insert_prepared(buf, buf + hsize, index, &info);
         if(err != ERROR_SUCCESS)
         {
             file_index_destroy(index);
@@ -265,43 +256,17 @@ int file_index_open(const struct config* conf, struct file_index* index)
     return ERROR_SUCCESS;
 }
 
-static int store_file(const char* storage, const char* path)
-{
-    if(cp(storage, path) == -1)
-    {
-        return ERROR_SYSTEM;
-    }
-    return ERROR_SUCCESS;
-}
-
-static int restore_file(const char* storage, const char* path)
-{
-    if(rename(storage, path) == 0)
-    {
-        return ERROR_SUCCESS;
-    }
-    if(cp(path, storage) == -1)
-    {
-        return ERROR_SYSTEM;
-    }
-    return ERROR_SUCCESS;
-}
-
-static int reset_storage(const char* storage)
-{
-    if(unlink(storage) < 0)
-    {
-        return ERROR_SYSTEM;
-    }
-    return ERROR_SUCCESS;
-}
-
 int file_index_save(struct file_index* index)
 {
     assert(index);
     assert(index->file);
+    size_t hsize;
+    int err = hash_size(index->digest, &hsize);
+    if(err != ERROR_SUCCESS)
+    {
+        return err;
+    }
     const char* storage = ".~file_index";
-    int err;
 
     if (fseek(index->file, 0, SEEK_SET) < 0)
     {
@@ -326,7 +291,7 @@ int file_index_save(struct file_index* index)
     {
         if(val->value->ref_count > 0)
         {
-            if (fwrite(val->value->hash, 1, index->hash_size, index->file) != index->hash_size)
+            if (fwrite(val->value->hash, 1, hsize, index->file) != hsize)
             {
                 int tmperrno = errno;
                 restore_file(storage, index->path);
@@ -429,9 +394,13 @@ int file_index_find_by_hash(const unsigned char *hash, const struct file_index *
 {
     assert(hash);
     assert(index);
-
-    int err;
-    ENCODE(hash, index->hash_size, err);
+    size_t hsize;
+    int err = hash_size(index->digest, &hsize);
+    if(err != ERROR_SUCCESS)
+    {
+        return err;
+    }
+    ENCODE(hash, hsize, err);
     if(err != ERROR_SUCCESS)
     {
         return err;
@@ -456,12 +425,12 @@ int file_index_find_by_name(const unsigned char *name, const struct file_index *
     assert(index);
 
     int err;
-    ENCODE(name, index->name_size, err);
+    char* name_encoded;
+    err = file_name_readable(name, index->name_size, &name_encoded);
     if(err != ERROR_SUCCESS)
     {
         return err;
     }
-    to_file_name(name_encoded);
 
     struct file_index_value_by_name* val = NULL;
     HASH_FIND_STR(index->by_name, name_encoded, val);
@@ -492,12 +461,25 @@ int file_index_insert(const unsigned char* hash, struct file_index* index, struc
     return err;
 }
 
-extern size_t file_index_hash_size(struct file_index* index)
+size_t file_index_hash_size(const struct file_index* index)
 {
-    return index->hash_size;
+    size_t ret;
+    int err = hash_size(index->digest, &ret);
+    assert(err == ERROR_SUCCESS);
+    return ret;
 }
 
-extern size_t file_index_name_size(struct file_index* index)
+const char* file_index_hash_digest(const struct file_index* index)
+{
+    return index->digest;
+}
+
+const char* file_index_file_dir(const struct file_index* index)
+{
+    return index->file_dir;
+}
+
+size_t file_index_name_size(struct file_index* index)
 {
     return index->name_size;
 }

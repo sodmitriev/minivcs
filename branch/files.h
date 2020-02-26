@@ -13,17 +13,13 @@ struct file_index
     FILE* file;
     const char* path;
     const char* file_dir;
+    const char* digest;
     struct file_index_value_by_hash* by_hash;
     struct file_index_value_by_name* by_name;
-    size_t hash_size;
     size_t name_size;
 };
 
 struct file_info;
-
-
-
-extern int file_name_readable(const unsigned char* name, size_t size, char** readable);
 
 
 
@@ -43,7 +39,11 @@ extern int file_index_find_by_name(const unsigned char *name, const struct file_
 
 extern int file_index_insert(const unsigned char* hash, struct file_index* index, struct file_info** file);
 
-extern size_t file_index_hash_size(struct file_index* index);
+extern size_t file_index_hash_size(const struct file_index* index);
+
+extern const char* file_index_hash_digest(const struct file_index* index);
+
+extern const char* file_index_file_dir(const struct file_index* index);
 
 extern size_t file_index_name_size(struct file_index* index);
 

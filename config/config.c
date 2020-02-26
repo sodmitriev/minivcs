@@ -2,6 +2,7 @@
 #include <ec.h>
 #include <uthash.h>
 #include <limits.h>
+#include <errno.h>
 
 struct config_key_value
 {
@@ -57,7 +58,14 @@ int config_load(const char* path, struct config* conf)
         }
         config_set(line, val_start, conf);
     }
-    return ferror(file) == 0 ? ERROR_SUCCESS : ERROR_SYSTEM;
+    if(ferror(file))
+    {
+        int tmperrno = errno;
+        config_destroy(conf);
+        errno = tmperrno;
+        return ERROR_SYSTEM;
+    }
+    return ERROR_SUCCESS;
 }
 
 int config_save(struct config* conf)
