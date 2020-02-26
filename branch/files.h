@@ -12,6 +12,7 @@ struct file_index
 {
     FILE* file;
     const char* path;
+    const char* file_dir;
     struct file_index_value_by_hash* by_hash;
     struct file_index_value_by_name* by_name;
     size_t hash_size;

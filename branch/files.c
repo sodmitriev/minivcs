@@ -6,6 +6,7 @@
 #include <file/encode.h>
 #include <limits.h>
 #include <sys/random.h>
+#include <dirent.h>
 #include "cp.h"
 
 struct file_info
@@ -79,11 +80,21 @@ static int file_index_init_mode(const struct config* conf, struct file_index* in
     assert(conf);
     assert(index);
     const char* path = config_get("file_index_path", conf);
+    const char* file_dir = config_get("file_dir", conf);
     const char* digest = config_get("file_digest", conf);
     const char* name_len_str = config_get("file_name_len", conf);
-    if(!path || !digest || !name_len_str)
+    if(!path || !file_dir || !digest || !name_len_str)
     {
         return ERROR_CONFIG;
+    }
+
+    {
+        DIR* dir = opendir(file_dir);
+        if(dir == NULL)
+        {
+            return ERROR_CONFIG;
+        }
+        closedir(dir);
     }
 
     char* eptr;
@@ -107,6 +118,7 @@ static int file_index_init_mode(const struct config* conf, struct file_index* in
     index->by_hash = NULL;
     index->by_name = NULL;
     index->path = path;
+    index->file_dir = file_dir;
     return ERROR_SUCCESS;
 }
 
@@ -345,27 +357,37 @@ int file_index_save(struct file_index* index)
         return ERROR_SYSTEM;
     }
     reset_storage(storage);
-    for (val = index->by_name; val != NULL; val = val->hh.next)
+    size_t dir_path_len = strlen(index->file_dir);
+    char* name = malloc(FILENAME_MAX + dir_path_len + 2);
+    if(name)
     {
-        if(access(val->name, F_OK) >= 0)
+        strcpy(name, index->file_dir);
+        strcat(name, "/");
+        for (val = index->by_name; val != NULL; val = val->hh.next)
         {
-            if(val->value->ref_count == 0)
+            name[dir_path_len + 1] = '\0';
+            strcat(name, val->name);
+            if (access(name, F_OK) >= 0)
             {
-                unlink(val->name);
-            }
-        }
-        else if(errno == ENOENT)
-        {
-            if(val->value->ref_count > 0)
-            {
-                FILE* f = fopen(val->name, "w");
-                if(f)
+                if (val->value->ref_count == 0)
                 {
-                    fclose(f);
+                    unlink(name);
+                }
+            }
+            else if (errno == ENOENT)
+            {
+                if (val->value->ref_count > 0)
+                {
+                    FILE *f = fopen(name, "w");
+                    if (f)
+                    {
+                        fclose(f);
+                    }
                 }
             }
         }
-    }
+        free(name);
+    } //else leave the garbage, nothing will break
     return ERROR_SUCCESS;
 }
 

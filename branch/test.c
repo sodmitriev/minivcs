@@ -6,16 +6,21 @@
 #include <unistd.h>
 #include <errno.h>
 #include <malloc.h>
+#include <sys/stat.h>
 
 #define DIGEST "sha1"
+#define FILE_DIR "./files"
 
 int main()
 {
     struct config conf;
     config_init("conf", &conf);
     config_set("file_index_path", "index", &conf);
+    config_set("file_dir", FILE_DIR, &conf);
     config_set("file_digest", DIGEST, &conf);
     config_set("file_name_len", "32", &conf);
+
+    mkdir(FILE_DIR, S_IRWXU | S_IRWXG | S_IRWXO);
 
     struct file_index index;
     file_index_init(&conf, &index);
@@ -85,16 +90,23 @@ int main()
     assert(file_index_find_by_hash(hash3, &new_index, NULL) == ERROR_NOTFOUND);
     file_index_destroy(&new_index);
 
-    char* name1 = NULL;
-    char* name2 = NULL;
-    char* name3 = NULL;
+    char* name1_rel = NULL;
+    char* name2_rel = NULL;
+    char* name3_rel = NULL;
 
-    file_name_readable(file_info_get_name(info1), name_size, &name1);
-    file_name_readable(file_info_get_name(info2), name_size, &name2);
-    file_name_readable(file_info_get_name(info3), name_size, &name3);
-    assert(name1);
-    assert(name2);
-    assert(name3);
+    file_name_readable(file_info_get_name(info1), name_size, &name1_rel);
+    file_name_readable(file_info_get_name(info2), name_size, &name2_rel);
+    file_name_readable(file_info_get_name(info3), name_size, &name3_rel);
+    assert(name1_rel);
+    assert(name2_rel);
+    assert(name3_rel);
+
+    char* name1 = malloc(strlen(name1_rel) + strlen(FILE_DIR) + 2);
+    strcat(strcat(strcpy(name1, FILE_DIR), "/"), name1_rel);
+    char* name2 = malloc(strlen(name2_rel) + strlen(FILE_DIR) + 2);
+    strcat(strcat(strcpy(name2, FILE_DIR), "/"), name2_rel);
+    char* name3 = malloc(strlen(name3_rel) + strlen(FILE_DIR) + 2);
+    strcat(strcat(strcpy(name3, FILE_DIR), "/"), name3_rel);
 
     assert(access(name1, F_OK) == -1 && errno == ENOENT);
     assert(access(name2, F_OK) == -1 && errno == ENOENT);
@@ -151,6 +163,15 @@ int main()
 
     file_index_destroy(&index);
     config_destroy(&conf);
+    rmdir(FILE_DIR);
+    unlink("tmp1");
+    unlink("tmp2");
+    unlink("tmp3");
+    unlink("conf");
+    unlink("index");
+    free(name1_rel);
+    free(name2_rel);
+    free(name3_rel);
     free(name1);
     free(name2);
     free(name3);
