@@ -45,7 +45,7 @@ static int branch_index_init_mode(const struct config* conf, struct branch_index
         DIR* dir = opendir(branch_dir);
         if(dir == NULL)
         {
-            return ERROR_CONFIG;
+            return ERROR_SYSTEM;
         }
         closedir(dir);
     }
@@ -641,81 +641,88 @@ int branch_save(struct branch_info* branch)
     }
     for (val = branch->files_saved; val != NULL; val = val->next)
     {
-        struct file_info* info;
-        err = file_index_find_by_hash(val->hash, branch->index, &info);
-        if(err == ERROR_NOTFOUND)
+        if(val->path[strlen(val->path) - 1] != '/')
         {
-            perror("Corrupted data");
-            restore_file(storage, branch->path);
-            abort();
+            struct file_info *info;
+            err = file_index_find_by_hash(val->hash, branch->index, &info);
+            if (err == ERROR_NOTFOUND)
+            {
+                perror("Corrupted data");
+                restore_file(storage, branch->path);
+                abort();
+            }
+            else if (err != ERROR_SUCCESS)
+            {
+                perror("Critical error, aborting to prevent data loss");
+                restore_file(storage, branch->path);
+                abort();
+            }
+            file_info_remove_ref(info);
         }
-        else if(err != ERROR_SUCCESS)
-        {
-            perror("Critical error, aborting to prevent data loss");
-            restore_file(storage, branch->path);
-            abort();
-        }
-        file_info_remove_ref(info);
     }
     for (val = branch->files; val != NULL; val = val->next)
     {
-        struct file_info* info;
-        err = file_index_find_by_hash(val->hash, branch->index, &info);
-        if(err == ERROR_SUCCESS)
+        if(val->path[strlen(val->path) - 1] != '/')
         {
-            file_info_add_ref(info);
-        }
-        else if(err == ERROR_NOTFOUND)
-        {
-            if(file_index_insert(val->hash, branch->index, &info) != ERROR_SUCCESS)
+            struct file_info *info;
+            err = file_index_find_by_hash(val->hash, branch->index, &info);
+            if (err == ERROR_SUCCESS)
+            {
+                file_info_add_ref(info);
+            }
+            else if (err == ERROR_NOTFOUND)
+            {
+                if (file_index_insert(val->hash, branch->index, &info) != ERROR_SUCCESS)
+                {
+                    restore_file(storage, branch->path);
+                    perror("Critical error, aborting to prevent data loss");
+                    abort();
+                }
+                file_info_add_ref(info);
+                char *fname;
+                if (file_name_readable(file_info_get_name(info), file_index_name_size(branch->index), &fname) !=
+                    ERROR_SUCCESS)
+                {
+                    restore_file(storage, branch->path);
+                    perror("Critical error, aborting to prevent data loss");
+                    abort();
+                }
+                char *full_path = malloc(strlen(val->path) + 2 + strlen(branch->imported_dir));
+                if (!full_path)
+                {
+                    restore_file(storage, branch->path);
+                    perror("Critical error, aborting to prevent data loss");
+                    abort();
+                }
+                char *full_name = malloc(strlen(fname) + 2 + strlen(file_index_file_dir(branch->index)));
+                if (!full_name)
+                {
+                    restore_file(storage, branch->path);
+                    perror("Critical error, aborting to prevent data loss");
+                    abort();
+                }
+                strcpy(full_path, branch->imported_dir);
+                strcat(full_path, "/");
+                strcat(full_path, val->path);
+                strcpy(full_name, file_index_file_dir(branch->index));
+                strcat(full_name, "/");
+                strcat(full_name, fname);
+                if (cp(full_name, full_path) < 0)
+                {
+                    restore_file(storage, branch->path);
+                    perror("Critical error, aborting to prevent data loss");
+                    abort();
+                }
+                free(fname);
+                free(full_path);
+                free(full_name);
+            }
+            else
             {
                 restore_file(storage, branch->path);
                 perror("Critical error, aborting to prevent data loss");
                 abort();
             }
-            file_info_add_ref(info);
-            char* fname;
-            if(file_name_readable(file_info_get_name(info), file_index_name_size(branch->index), &fname) != ERROR_SUCCESS)
-            {
-                restore_file(storage, branch->path);
-                perror("Critical error, aborting to prevent data loss");
-                abort();
-            }
-            char* full_path = malloc(strlen(val->path) + 2 + strlen(branch->imported_dir));
-            if(!full_path)
-            {
-                restore_file(storage, branch->path);
-                perror("Critical error, aborting to prevent data loss");
-                abort();
-            }
-            char* full_name = malloc(strlen(fname) + 2 + strlen(file_index_file_dir(branch->index)));
-            if(!full_name)
-            {
-                restore_file(storage, branch->path);
-                perror("Critical error, aborting to prevent data loss");
-                abort();
-            }
-            strcpy(full_path, branch->imported_dir);
-            strcat(full_path, "/");
-            strcat(full_path, val->path);
-            strcpy(full_name, file_index_file_dir(branch->index));
-            strcat(full_name, "/");
-            strcat(full_name, fname);
-            if(cp(full_name, full_path) < 0)
-            {
-                restore_file(storage, branch->path);
-                perror("Critical error, aborting to prevent data loss");
-                abort();
-            }
-            free(fname);
-            free(full_path);
-            free(full_name);
-        }
-        else
-        {
-            restore_file(storage, branch->path);
-            perror("Critical error, aborting to prevent data loss");
-            abort();
         }
     }
     if(file_index_save(branch->index) != ERROR_SUCCESS)
@@ -840,48 +847,63 @@ int branch_extract(const struct branch_info* branch, const char* dst_dir)
             errno = ENAMETOOLONG;
             return ERROR_SYSTEM;
         }
-        struct file_info* info;
-        err = file_index_find_by_hash(val->hash, branch->index, &info);
-        if(err != ERROR_SUCCESS)
+        if(val->path[strlen(val->path) - 1] == '/')
         {
-            free(to);
-            free(from);
-            return err;
+            *to_end = '\0';
+            strcat(to_end, val->path);
+            err = create_subdirs(to);
+            if (err != ERROR_SUCCESS)
+            {
+                free(to);
+                free(from);
+                return err;
+            }
         }
-        char* orig_name;
-        err = file_name_readable(file_info_get_name(info), file_index_name_size(branch->index), &orig_name);
-        if(err != ERROR_SUCCESS)
+        else
         {
-            free(to);
-            free(from);
-            errno = ENAMETOOLONG;
-            return ERROR_SYSTEM;
-        }
-        if(from_dir_path_len + 1 + strlen(orig_name) > PATH_MAX)
-        {
-            free(to);
-            free(from);
+            struct file_info *info;
+            err = file_index_find_by_hash(val->hash, branch->index, &info);
+            if (err != ERROR_SUCCESS)
+            {
+                free(to);
+                free(from);
+                return err;
+            }
+            char *orig_name;
+            err = file_name_readable(file_info_get_name(info), file_index_name_size(branch->index), &orig_name);
+            if (err != ERROR_SUCCESS)
+            {
+                free(to);
+                free(from);
+                errno = ENAMETOOLONG;
+                return ERROR_SYSTEM;
+            }
+            if (from_dir_path_len + 1 + strlen(orig_name) > PATH_MAX)
+            {
+                free(to);
+                free(from);
+                free(orig_name);
+                errno = ENAMETOOLONG;
+                return ERROR_SYSTEM;
+            }
+            *to_end = '\0';
+            *from_end = '\0';
+            strcat(to_end, val->path);
+            strcat(from_end, orig_name);
             free(orig_name);
-            errno = ENAMETOOLONG;
-            return ERROR_SYSTEM;
-        }
-        *to_end = '\0';
-        *from_end = '\0';
-        strcat(to_end, val->path);
-        strcat(from_end, orig_name);
-        free(orig_name);
-        err = create_subdirs(to);
-        if(err != ERROR_SUCCESS)
-        {
-            free(to);
-            free(from);
-            return err;
-        }
-        if(cp(to, from) < 0)
-        {
-            free(to);
-            free(from);
-            return ERROR_SYSTEM;
+            err = create_subdirs(to);
+            if (err != ERROR_SUCCESS)
+            {
+                free(to);
+                free(from);
+                return err;
+            }
+            if (cp(to, from) < 0)
+            {
+                free(to);
+                free(from);
+                return ERROR_SYSTEM;
+            }
         }
     }
     free(to);
@@ -900,13 +922,16 @@ static int branch_put_dir(struct branch_info* branch, struct branch_info_value**
         return ERROR_SYSTEM;
     }
     strcat(src_dir, "/");
-    for(struct dirent* dirent = readdir(dir); dirent != NULL; dirent = readdir(dir))
+    struct dirent* dirent;
+    int empty = 1;
+    for(dirent = readdir(dir); dirent != NULL; dirent = readdir(dir))
     {
         struct stat file_stat;
         if(strcmp(dirent->d_name, ".") == 0 || strcmp(dirent->d_name, "..") == 0)
         {
             continue;
         }
+        empty = 0;
         dir_end[1] = '\0';
         strcat(src_dir, dirent->d_name);
         int err = stat(src_dir, &file_stat);
@@ -971,8 +996,51 @@ static int branch_put_dir(struct branch_info* branch, struct branch_info_value**
             branch_put_dir(branch, htab, src_dir, orig_len);
         }
     }
-    *dir_end = '\0';
     closedir(dir);
+    if(empty)
+    {
+        dir_end[1] = '\0';
+        char* namedup;
+        if(*(src_dir + orig_len + 1) == '\0')
+        {
+            namedup = strdup("/");
+        }
+        else
+        {
+            namedup = strdup(src_dir + orig_len + 1);
+        }
+        if(!namedup)
+        {
+            *dir_end = '\0';
+            return ERROR_SYSTEM;
+        }
+        if(namedup[0] == '\0')
+        {
+            namedup[0] = '/';
+            namedup[1] = '\0';
+        }
+        unsigned char* fhash = malloc(hash_size);
+        if(!fhash)
+        {
+            *dir_end = '\0';
+            free(namedup);
+            return ERROR_SYSTEM;
+        }
+        memset(fhash, 0, hash_size);
+        struct branch_info_value* val = malloc(sizeof(struct branch_info_value));
+        if(!val)
+        {
+            *dir_end = '\0';
+            free(namedup);
+            free(fhash);
+            return ERROR_SYSTEM;
+        }
+        val->hash = fhash;
+        val->path = namedup;
+        val->next = *htab;
+        *htab = val;
+    }
+    *dir_end = '\0';
     return ERROR_SUCCESS;
 }
 

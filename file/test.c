@@ -23,7 +23,7 @@ int main()
         fclose(f1);
         fclose(f2);
         size_t hsize;
-        if(!hash_size(DIGEST, &hsize))
+        if(hash_size(DIGEST, &hsize) != ERROR_SUCCESS)
         {
             abort();
         }
