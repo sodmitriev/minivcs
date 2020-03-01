@@ -43,6 +43,10 @@ extern int branch_index_delete_branch(const char* name, struct branch_index* bra
 
 extern int branch_index_find(const char* name, struct branch_index* index, const char** file);
 
+extern size_t branch_index_count(const struct branch_index* index);
+
+extern void branch_index_get_names(const char** names, const struct branch_index* index);
+
 
 
 extern int branch_index_get_branch(const char* name, struct branch_index* index, struct branch_info* branch);

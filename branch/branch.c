@@ -414,6 +414,22 @@ int branch_index_find(const char* name, struct branch_index* index, const char**
     return ERROR_SUCCESS;
 }
 
+size_t branch_index_count(const struct branch_index* index)
+{
+    assert(index);
+    return HASH_COUNT(index->by_name);
+}
+
+void branch_index_get_names(const char** names, const struct branch_index* index)
+{
+    assert(index);
+    for (struct branch_index_value* val = index->by_name; val != NULL; val = val->hh.next)
+    {
+        *names = val->name;
+        ++names;
+    }
+}
+
 static int branch_create(struct branch_info* branch)
 {
     branch->file = fopen(branch->path, "w");

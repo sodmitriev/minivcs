@@ -326,6 +326,13 @@ int main()
         branch_index_new_branch("empty", &index);
         branch_index_new_branch("filled1", &index);
         branch_index_new_branch("filled2", &index);
+
+        const char* names[3];
+        assert(branch_index_count(&index) == 3);
+        branch_index_get_names(names, &index);
+        assert(strcmp(names[0], "empty") == 0 || strcmp(names[1], "empty") == 0 ||strcmp(names[2], "empty") == 0);
+        assert(strcmp(names[0], "filled1") == 0 || strcmp(names[1], "filled1") == 0 ||strcmp(names[2], "filled1") == 0);
+        assert(strcmp(names[0], "filled2") == 0 || strcmp(names[1], "filled2") == 0 ||strcmp(names[2], "filled2") == 0);
 /*--------------------------------------------------------------------------------------------------------------------*/
         branch_index_get_branch("empty", &index, &branch1);
         branch_index_get_branch("filled1", &index, &branch2);
@@ -488,6 +495,14 @@ int main()
         //Check index has a more recent version of file index, passing &index would lead to corruption
         branch_index_delete_branch("filled1", &check_index);
         branch_index_save(&check_index);
+
+        assert(branch_index_count(&check_index) == 2);
+        names[0] = NULL;
+        names[1] = NULL;
+        branch_index_get_names(names, &check_index);
+        assert(strcmp(names[0], "empty") == 0 || strcmp(names[1], "empty") == 0);
+        assert(strcmp(names[0], "filled2") == 0 || strcmp(names[1], "filled2") == 0);
+
         branch_index_destroy(&check_index);
 /*--------------------------------------------------------------------------------------------------------------------*/
         branch_index_open(&conf, &check_index);
