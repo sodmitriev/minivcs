@@ -1,6 +1,5 @@
 #include "hash.h"
 #include "encode.h"
-#include "crypt.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -60,85 +59,6 @@ int main()
             abort();
         }
         assert(memcmp(b64hash1, b64hash2, sizeof(hash1)) != 0);
-    }
-
-    //Crypto
-    {
-        const char msg[] = "0000000000000000"
-                           "1111111111111111"
-                           "2222222222222222"
-                           "3333333333333333"
-                           "4444444444444444"
-                           "5555555555555555"
-                           "6666666666666666"
-                           "7777777777777777"
-                           "8888888888888888"
-                           "9999999999999999"
-                           "aaaaaaaaaaaaaaaa"
-                           "bbbbbbbbbbbbbbbb"
-                           "cccccccccccccccc"
-                           "dddddddddddddddd"
-                           "eeeeeeeeeeeeeeee"
-                           "fffffff";
-        FILE *f = fopen("testfile", "w+");
-        fprintf(f, msg);
-        fclose(f);
-        if(encrypt_file("testfile", "testfile.ECRYPTED", "mykey", "aes-256-cbc", "sha1"))
-        {
-            abort();
-        }
-        unlink("testfile");
-        if(decrypt_file("testfile.ECRYPTED", "testfile", "mykey", "aes-256-cbc", "sha1"))
-        {
-            abort();
-        }
-        f = fopen("testfile", "r");
-        char buf[1024];
-        fscanf(f, "%s", buf);
-        if(strcmp(buf, msg) != 0)
-        {
-            abort();
-        }
-
-        struct file_encrypted* file = file_encrypted_new();
-        assert(file);
-
-        if(file_encrypted_open("testfile.ECRYPTED", "w", "mykey", "aes-256-cbc", "sha1", file))
-        {
-            abort();
-        }
-        size_t sizeo;
-        if(file_encrypted_write(msg, 4, &sizeo, file))
-        {
-            abort();
-        }
-        assert(sizeo == 4);
-        if(file_encrypted_write(msg + 4, sizeof(msg) - 4, &sizeo, file))
-        {
-            abort();
-        }
-        file_encrypted_close(file);
-
-        if(file_encrypted_open("testfile.ECRYPTED", "r", "mykey", "aes-256-cbc", "sha1", file))
-        {
-            abort();
-        }
-        memset(buf, 0, sizeof(buf));
-        if(file_encrypted_read(buf, 4, &sizeo, file))
-        {
-            abort();
-        }
-        assert(sizeo == 4);
-        if(file_encrypted_read(buf + 4, sizeof(buf) - 4, &sizeo, file))
-        {
-            abort();
-        }
-        file_encrypted_close(file);
-        file_encrypted_delete(file);
-        if(memcmp(buf, msg, sizeof(msg) - 1) != 0)
-        {
-            abort();
-        }
     }
 
     return 0;
