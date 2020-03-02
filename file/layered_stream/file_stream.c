@@ -9,12 +9,12 @@ struct layered_stream_file
     FILE* file;
 };
 
-ssize_t layered_stream_file_read(char* ptr, size_t size, struct layered_stream_file* stream)
+size_t layered_stream_file_read(char* ptr, size_t size, struct layered_stream_file* stream)
 {
     return fread(ptr, 1, size, stream->file);
 }
 
-ssize_t layered_stream_file_write(const char* ptr, size_t size, struct layered_stream_file* stream)
+size_t layered_stream_file_write(const char* ptr, size_t size, struct layered_stream_file* stream)
 {
     return fwrite(ptr, 1, size, stream->file);
 }
@@ -43,15 +43,15 @@ int layered_stream_file_close(struct layered_stream_file* stream)
 
 const struct layered_stream_call_tab layered_stream_call_tab_file =
 {
-    .read_func      = (ssize_t (*)(char *, size_t, struct layered_stream *))        layered_stream_file_read,
-    .write_func     = (ssize_t (*)(const char *, size_t, struct layered_stream *))  layered_stream_file_write,
+    .read_func      = (size_t (*)(char *, size_t, struct layered_stream *))        layered_stream_file_read,
+    .write_func     = (size_t (*)(const char *, size_t, struct layered_stream *))  layered_stream_file_write,
     .eof_func       = (int (*)(struct layered_stream *))                            layered_stream_file_eof,
     .error_func     = (int (*)(struct layered_stream *))                            layered_stream_file_error,
     .clearerr_func  = (void (*)(struct layered_stream *))                           layered_stream_file_clearerr,
     .close_func     = (int (*)(struct layered_stream *))                            layered_stream_file_close
 };
 
-struct layered_stream* layered_stream_file_open(const char *pathname, const char *mode)
+struct layered_stream_file* layered_stream_file_open(const char *pathname, const char *mode)
 {
     struct layered_stream_file* stream = malloc(sizeof(struct layered_stream_file));
     if(!stream)
@@ -67,5 +67,5 @@ struct layered_stream* layered_stream_file_open(const char *pathname, const char
     stream->base.source = NULL;
     stream->base.calls = &layered_stream_call_tab_file;
     stream->file = file;
-    return (struct layered_stream*) stream;
+    return stream;
 }

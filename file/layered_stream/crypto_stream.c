@@ -20,12 +20,12 @@ struct layered_stream_crypto
     int failed;
 };
 
-ssize_t layered_stream_crypto_read(char* ptr, size_t size, struct layered_stream_crypto* stream)
+size_t layered_stream_crypto_read(char* ptr, size_t size, struct layered_stream_crypto* stream)
 {
     if(stream->encrypt)
     {
         errno = EPERM;
-        return -1;
+        return 0;
     }
     ssize_t ret = 0;
     if(stream->pos < stream->size)
@@ -93,12 +93,12 @@ ssize_t layered_stream_crypto_read(char* ptr, size_t size, struct layered_stream
     return ret;
 }
 
-ssize_t layered_stream_crypto_write(const char* ptr, size_t size, struct layered_stream_crypto* stream)
+size_t layered_stream_crypto_write(const char* ptr, size_t size, struct layered_stream_crypto* stream)
 {
     if(!stream->encrypt)
     {
         errno = EPERM;
-        return -1;
+        return 0;
     }
     ssize_t ret = 0;
     int len = 0;
@@ -109,12 +109,12 @@ ssize_t layered_stream_crypto_write(const char* ptr, size_t size, struct layered
         {
             errno = ENOANO;
             stream->failed = 1;
-            return -1;
+            return 0;
         }
         if(layered_stream_write(stream->pending, len, stream->base.source) != len)
         {
             stream->failed = 1;
-            return -1;
+            return 0;
         }
         stream->size = len;
         ptr += num;
@@ -177,15 +177,15 @@ int layered_stream_crypto_close(struct layered_stream_crypto* stream)
 
 const struct layered_stream_call_tab layered_stream_call_tab_crypto =
 {
-    .read_func      = (ssize_t (*)(char *, size_t, struct layered_stream *))        layered_stream_crypto_read,
-    .write_func     = (ssize_t (*)(const char *, size_t, struct layered_stream *))  layered_stream_crypto_write,
+    .read_func      = (size_t (*)(char *, size_t, struct layered_stream *))         layered_stream_crypto_read,
+    .write_func     = (size_t (*)(const char *, size_t, struct layered_stream *))   layered_stream_crypto_write,
     .eof_func       = (int (*)(struct layered_stream *))                            layered_stream_crypto_eof,
     .error_func     = (int (*)(struct layered_stream *))                            layered_stream_crypto_error,
     .clearerr_func  = (void (*)(struct layered_stream *))                           layered_stream_crypto_clearerr,
     .close_func     = (int (*)(struct layered_stream *))                            layered_stream_crypto_close
 };
 
-struct layered_stream* layered_stream_crypto_open(lrdstream* source, const char* cipher, const char* digest, const char* key, int encrypt)
+struct layered_stream_crypto* layered_stream_crypto_open(lrdstream* source, const char* cipher, const char* digest, const char* key, int encrypt)
 {
     const EVP_CIPHER* ciph = EVP_get_cipherbyname(cipher);
     const EVP_MD* md = EVP_get_digestbyname(digest);
@@ -257,7 +257,7 @@ struct layered_stream* layered_stream_crypto_open(lrdstream* source, const char*
     stream->base.calls = &layered_stream_call_tab_crypto;
     free(raw_key);
     free(iv);
-    return (struct layered_stream*) stream;
+    return stream;
 
 layered_stream_crypto_open_cleanup_ctx:
     EVP_CIPHER_CTX_free(ctx);

@@ -1,12 +1,10 @@
 #ifndef MINIVCS_LAYERED_STREAM_DEF_H
 #define MINIVCS_LAYERED_STREAM_DEF_H
 
-#include <sys/types.h>
-
 struct layered_stream_call_tab
 {
-    ssize_t (*read_func)(char *ptr, size_t size, struct layered_stream* stream);
-    ssize_t (*write_func)(const char* ptr, size_t size, struct layered_stream* stream);
+    size_t (*read_func)(char *ptr, size_t size, struct layered_stream* stream);
+    size_t (*write_func)(const char* ptr, size_t size, struct layered_stream* stream);
     int (*eof_func)(struct layered_stream* stream);
     int (*error_func)(struct layered_stream* stream);
     void (*clearerr_func)(struct layered_stream* stream);

@@ -3,7 +3,7 @@
 
 #include "layered_stream.h"
 
-extern lrdstream* layered_stream_crypto_open(lrdstream* source, const char* cipher, const char* digest, const char* key,
-                                             int encrypt);
+extern struct layered_stream_crypto* layered_stream_crypto_open(lrdstream* source, const char* cipher,
+                                                                const char* digest, const char* key, int encrypt);
 
 #endif //MINIVCS_CRYPTO_STREAM_H

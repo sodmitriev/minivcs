@@ -3,12 +3,12 @@
 
 #define SEND_BUFFER_SIZE 4096
 
-ssize_t layered_stream_read(char* ptr, size_t size, struct layered_stream* stream)
+size_t layered_stream_read(char* ptr, size_t size, struct layered_stream* stream)
 {
     return stream->calls->read_func(ptr, size, stream);
 }
 
-ssize_t layered_stream_write(const char* ptr, size_t size, struct layered_stream* stream)
+size_t layered_stream_write(const char* ptr, size_t size, struct layered_stream* stream)
 {
     return stream->calls->write_func(ptr, size, stream);
 }

@@ -1,9 +1,11 @@
 #include "file_stream.h"
 #include "crypto_stream.h"
+#include "mem_stream.h"
 #include <stdio.h>
 #include <zconf.h>
 #include <assert.h>
 #include <string.h>
+#include <stdlib.h>
 
 int main()
 {
@@ -91,6 +93,27 @@ int main()
         assert(layered_stream_close(stream) == 0);
 
         unlink("test");
+    }
+    //Mem stream test
+    {
+        char* ptr;
+        size_t size;
+        lrdstream *stream = layered_stream_mem_open(&ptr, &size);
+        assert(stream);
+        assert(layered_stream_write(msg, sizeof(msg), stream) == sizeof(msg));
+        assert(size == sizeof(msg));
+        assert(layered_stream_error(stream) == 0);
+        assert(layered_stream_close(stream) == 0);
+
+        stream = layered_stream_mem_open_reuse(&ptr, &size);
+        assert(stream);
+        assert(layered_stream_read(buf, sizeof(buf), stream) == sizeof(msg));
+        assert(size == sizeof(msg));
+        assert(layered_stream_error(stream) == 0);
+        assert(strcmp(msg, buf) == 0);
+        assert(layered_stream_close(stream) == 0);
+
+        free(ptr);
     }
     return 0;
 }
