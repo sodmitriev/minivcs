@@ -3,10 +3,10 @@
 
 extern int cp(const char *to, const char *from);
 
-extern int store_file(const char* storage, const char* path);
+extern void store_file(const char* storage, const char* path);
 
-extern int restore_file(const char* storage, const char* path);
+extern void restore_file(const char* storage, const char* path);
 
-extern int reset_storage(const char* storage);
+extern void reset_storage(const char* storage);
 
 #endif //MINIVCS_STORAGE_H

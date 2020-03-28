@@ -11,17 +11,17 @@ struct config
     struct config_key_value* hmap;
 };
 
-extern int config_init(const char* path, struct config* conf);
+extern void config_init(const char* path, struct config* conf);
 
-extern int config_load(const char* path, struct config* conf);
+extern void config_load(const char* path, struct config* conf);
 
-extern int config_save(struct config* conf);
+extern void config_save(struct config* conf);
 
-extern int config_destroy(struct config* conf);
+extern void config_destroy(struct config* conf);
 
 
 
-extern int config_set(const char* key, const char* value, struct config* conf);
+extern void config_set(const char* key, const char* value, struct config* conf);
 
 extern const char* config_get(const char* key, const struct config* conf);
 

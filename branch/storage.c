@@ -1,5 +1,5 @@
 #include "storage.h"
-#include <ec.h>
+#include <CTransform/CEasyException/exception.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -64,33 +64,31 @@ int cp(const char *to, const char *from)
     return -1;
 }
 
-int store_file(const char* storage, const char* path)
+void store_file(const char* storage, const char* path)
 {
     if(cp(storage, path) == -1)
     {
-        return ERROR_SYSTEM;
+        EXCEPTION_THROW(errno, "%s", "Failed to create file backup");
     }
-    return ERROR_SUCCESS;
 }
 
-int restore_file(const char* storage, const char* path)
+void restore_file(const char* storage, const char* path)
 {
     if(rename(storage, path) == 0)
     {
-        return ERROR_SUCCESS;
+        return;
     }
     if(cp(path, storage) == -1)
     {
-        return ERROR_SYSTEM;
+        EXCEPTION_THROW(errno, "%s", "Failed to restore file backup");
+        return;
     }
-    return ERROR_SUCCESS;
 }
 
-int reset_storage(const char* storage)
+void reset_storage(const char* storage)
 {
     if(unlink(storage) < 0)
     {
-        return ERROR_SYSTEM;
+        EXCEPTION_THROW(errno, "%s", "Failed to delete file backup");
     }
-    return ERROR_SUCCESS;
 }

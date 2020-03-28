@@ -29,19 +29,19 @@ struct branch_info
     struct file_index* index;
 };
 
-extern int branch_index_init(const struct config* conf, struct branch_index* branch_index);
+extern void branch_index_init(const struct config* conf, struct branch_index* branch_index);
 
-extern int branch_index_open(const struct config* conf, struct branch_index* branch_index);
+extern void branch_index_open(const struct config* conf, struct branch_index* branch_index);
 
-extern int branch_index_save(struct branch_index* index);
+extern void branch_index_save(struct branch_index* index);
 
-extern int branch_index_destroy(struct branch_index* index);
+extern void branch_index_destroy(struct branch_index* index);
 
-extern int branch_index_new_branch(const char* name, struct branch_index* branch_index);
+extern void branch_index_new_branch(const char* name, struct branch_index* branch_index);
 
-extern int branch_index_delete_branch(const char* name, struct branch_index* branch_index);
+extern void branch_index_delete_branch(const char* name, struct branch_index* branch_index);
 
-extern int branch_index_find(const char* name, struct branch_index* index, const char** file);
+extern const char* branch_index_find(const char* name, struct branch_index* index);
 
 extern size_t branch_index_count(const struct branch_index* index);
 
@@ -49,14 +49,14 @@ extern void branch_index_get_names(const char** names, const struct branch_index
 
 
 
-extern int branch_index_get_branch(const char* name, struct branch_index* index, struct branch_info* branch);
+extern void branch_index_get_branch(const char* name, struct branch_index* index, struct branch_info* branch);
 
-extern int branch_save(struct branch_info* branch);
+extern void branch_save(struct branch_info* branch);
 
-extern int branch_destroy(struct branch_info* branch);
+extern void branch_destroy(struct branch_info* branch);
 
-extern int branch_extract(const struct branch_info* branch, const char* dst_dir);
+extern void branch_extract(const char* dst_dir, const struct branch_info* branch);
 
-extern int branch_update(struct branch_info* branch, const char* src_dir);
+extern void branch_update(const char* src_dir, struct branch_info* branch);
 
 #endif //MINIVCS_BRANCH_H

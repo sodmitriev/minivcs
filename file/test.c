@@ -1,65 +1,129 @@
-#include "hash.h"
-#include "encode.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <assert.h>
-#include <zconf.h>
-#include <ec.h>
-#include <string.h>
+#include "operations.h"
 
-#define DIGEST "sha1"
+#include <sys/random.h>
+#include <stdlib.h>
+#include <CTransform/CEasyException/exception.h>
+#include <zconf.h>
+
+#define CHECK(x)\
+{\
+    if(!(x))\
+        abort();\
+} ((void)(0))
+
+#define HANDLE_EXCEPTION()                                          \
+if(EXCEPTION_IS_THROWN)                                             \
+{                                                                   \
+    fprintf(stderr, "%d : %s\n", EXCEPTION_ERROR, EXCEPTION_MSG);   \
+    abort();                                                        \
+} ((void)(0))
+
+#define FILE_NAME_RAW_LEN 160
 
 int main()
 {
-    //Hash + encode
-    {
-        FILE *f1 = fopen("testfile1", "w+");
-        FILE *f2 = fopen("testfile2", "w+");
-        assert(f1 != NULL);
-        assert(f2 != NULL);
-        fprintf(f1, "message1");
-        fprintf(f2, "message2");
-        fclose(f1);
-        fclose(f2);
-        size_t hsize;
-        if(hash_size(DIGEST, &hsize) != ERROR_SUCCESS)
-        {
-            abort();
-        }
-        unsigned char hash1[hsize];
-        unsigned char hash2[hsize];
-        memset(hash1, 0, sizeof(hash1));
-        memset(hash2, 0, sizeof(hash2));
-        int err = hash("testfile1", DIGEST, hash1);
-        if (err != ERROR_SUCCESS)
-        {
-            abort();
-        }
-        err = hash("testfile2", DIGEST, hash2);
-        if (err != ERROR_SUCCESS)
-        {
-            abort();
-        }
-        assert(memcmp(hash1, hash2, sizeof(hash1)) != 0);
-        unlink("testfile1");
-        unlink("testfile2");
+    struct config config;
+    config_init("test_config", &config);
 
-        char b64hash1[encoded_size(sizeof(hash1))];
-        char b64hash2[encoded_size(sizeof(hash2))];
-        memset(b64hash1, 1, sizeof(b64hash1));
-        memset(b64hash2, 1, sizeof(b64hash2));
-        err = encode(hash1, sizeof(hash1), b64hash1);
-        if (err != ERROR_SUCCESS)
+    config_set("file_digest", "sha1", &config);
+    config_set("key_digest", "sha1", &config);
+    config_set("file_cipher", "aes-256-cbc", &config);
+    config_set("compression_level", "5", &config);
+
+
+    EXCEPTION_CLEAR();
+
+    //File name
+    {
+        unsigned char buf[FILE_NAME_RAW_LEN];
+        ssize_t ret = getrandom(buf, sizeof(buf), 0);
+        CHECK(ret == sizeof(buf));
+        size_t size = file_get_name_length(sizeof(buf));
+        CHECK(((size - 1) / 4) * 3 >= sizeof(buf) && (((size - 1) / 4) - 1) * 3 <= sizeof(buf));
+        char name[size];
+        file_get_name(buf, sizeof(buf), name);
+        HANDLE_EXCEPTION();
+        CHECK(strlen(name) == size - 1);
+        char* end = name + size - 1;
+        char* ptr;
+        for(ptr = name; ptr != end && *ptr != '='; ++ptr)
         {
-            abort();
+            CHECK((*ptr >= 'A' && *ptr <= 'Z') || (*ptr >= 'a' && *ptr <= 'z') || (*ptr >= '0' && *ptr <= '9') ||
+                      *ptr == '+' || *ptr == '_');
         }
-        err = encode(hash2, sizeof(hash2), b64hash2);
-        if (err != ERROR_SUCCESS)
+        for(; ptr != end; ++ptr)
         {
-            abort();
+            CHECK(*ptr == '=');
         }
-        assert(memcmp(b64hash1, b64hash2, sizeof(hash1)) != 0);
     }
+
+    //Hash
+    {
+        const char msg1[] = "message1";
+        const char msg2[] = "message2";
+        {
+            FILE *f = fopen("test1", "w");
+            CHECK(f);
+            size_t ret = fwrite(msg1, 1, sizeof(msg1), f);
+            CHECK(ret == sizeof(msg1));
+            fclose(f);
+            f = fopen("test2", "w");
+            ret = fwrite(msg2, 1, sizeof(msg2), f);
+            CHECK(ret == sizeof(msg2));
+            fclose(f);
+            f = fopen("test3", "w");
+            ret = fwrite(msg1, 1, sizeof(msg1), f);
+            CHECK(ret == sizeof(msg1));
+            fclose(f);
+        }
+
+        size_t size = file_hash_size(&config);
+        HANDLE_EXCEPTION();
+
+        unsigned char hash1[size];
+        unsigned char hash2[size];
+        unsigned char hash3[size];
+
+        memset(hash1, '1', size);
+        memset(hash2, '1', size);
+        memset(hash3, '2', size);
+
+        file_hash("test1", &config, hash1);
+        HANDLE_EXCEPTION();
+        file_hash("test2", &config, hash2);
+        HANDLE_EXCEPTION();
+        file_hash("test3", &config, hash3);
+        HANDLE_EXCEPTION();
+
+        CHECK(memcmp(hash1, hash2, size) != 0);
+        CHECK(memcmp(hash1, hash3, size) == 0);
+
+        unlink("test1");
+        unlink("test2");
+        unlink("test3");
+    }
+
+    //Store and extract
+    {
+        const char msg[] = "message";
+        {
+            FILE *f = fopen("test", "w");
+            CHECK(f);
+            size_t ret = fwrite(msg, 1, sizeof(msg) - 1, f);
+            CHECK(ret == sizeof(msg) - 1);
+            fclose(f);
+        }
+        file_store("test", "test_stored", "mykey", &config);
+        HANDLE_EXCEPTION();
+
+        file_extract("test_stored", "test_out", "mykey", &config);
+        HANDLE_EXCEPTION();
+
+        CHECK(system("diff test test_out") == 0);
+    }
+
+    config_destroy(&config);
+    unlink("test_config");
 
     return 0;
 }

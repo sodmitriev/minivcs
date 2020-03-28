@@ -1,8 +1,5 @@
 #include "files.h"
-#include "name.h"
 #include "branch.h"
-#include <file/hash.h>
-#include <ec.h>
 #include <assert.h>
 #include <string.h>
 #include <unistd.h>
@@ -11,10 +8,24 @@
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <dirent.h>
+#include <file/operations.h>
 
 #define DIGEST "sha1"
 #define FILE_DIR "./files"
 #define BRANCH_DIR "./files"
+
+#define CHECK(x)\
+{\
+    if(!(x))\
+        abort();\
+} ((void)(0))
+
+#define HANDLE_EXCEPTION()                                          \
+if(EXCEPTION_IS_THROWN)                                             \
+{                                                                   \
+    fprintf(stderr, "%d : %s\n", EXCEPTION_ERROR, EXCEPTION_MSG);   \
+    abort();                                                        \
+} ((void)(0))
 
 size_t file_count(char *dirname)
 {
@@ -49,6 +60,7 @@ int is_directory_empty(char *dirname) {
 
 int main()
 {
+    EXCEPTION_CLEAR();
     //File index test
     {
         struct config conf;
@@ -62,6 +74,7 @@ int main()
 
         struct file_index index;
         file_index_init(&conf, &index);
+        HANDLE_EXCEPTION();
 
         FILE *f = fopen("tmp1", "w");
         fprintf(f, "message1");
@@ -73,8 +86,8 @@ int main()
         fprintf(f, "message3");
         fclose(f);
 
-        size_t size;
-        hash_size(DIGEST, &size);
+        size_t size = file_hash_size(&conf);
+        HANDLE_EXCEPTION();
         assert(size == file_index_hash_size(&index));
         size_t name_size = file_index_name_size(&index);
 
@@ -82,24 +95,27 @@ int main()
         unsigned char hash2[size];
         unsigned char hash3[size];
 
-        hash("tmp1", DIGEST, hash1);
-        hash("tmp2", DIGEST, hash2);
-        hash("tmp3", DIGEST, hash3);
+        file_hash("tmp1", &conf, hash1);
+        HANDLE_EXCEPTION();
+        file_hash("tmp2", &conf, hash2);
+        HANDLE_EXCEPTION();
+        file_hash("tmp3", &conf, hash3);
+        HANDLE_EXCEPTION();
 
-        struct file_info *info1;
-        file_index_insert(hash1, &index, &info1);
+        struct file_info *info1 = file_index_insert(hash1, &index);
+        HANDLE_EXCEPTION();
         assert(memcmp(file_info_get_hash(info1), hash1, size) == 0);
         assert(file_info_get_name(info1));
         assert(file_info_get_ref(info1) == 0);
 
-        struct file_info *info2;
-        file_index_insert(hash2, &index, &info2);
+        struct file_info *info2 = file_index_insert(hash2, &index);
+        HANDLE_EXCEPTION();
         assert(memcmp(file_info_get_hash(info2), hash2, size) == 0);
         assert(file_info_get_name(info2));
         assert(file_info_get_ref(info2) == 0);
 
-        struct file_info *info3;
-        file_index_insert(hash3, &index, &info3);
+        struct file_info *info3 = file_index_insert(hash3, &index);
+        HANDLE_EXCEPTION();
         assert(memcmp(file_info_get_hash(info3), hash3, size) == 0);
         assert(file_info_get_name(info3));
         assert(file_info_get_ref(info3) == 0);
@@ -110,34 +126,47 @@ int main()
 
         struct file_info *found = NULL;
 
-        file_index_find_by_hash(hash1, &index, &found);
+        found = file_index_find_by_hash(hash1, &index);
+        HANDLE_EXCEPTION();
         assert(found == info1);
 
-        file_index_find_by_hash(hash2, &index, &found);
+        found = file_index_find_by_hash(hash2, &index);
+        HANDLE_EXCEPTION();
         assert(found == info2);
 
-        file_index_find_by_hash(hash3, &index, &found);
+        found = file_index_find_by_hash(hash3, &index);
+        HANDLE_EXCEPTION();
         assert(found == info3);
 
         file_index_save(&index);
+        HANDLE_EXCEPTION();
 
         struct file_index new_index;
         file_index_open(&conf, &new_index);
-        assert(file_index_find_by_hash(hash1, &new_index, NULL) == ERROR_NOTFOUND);
-        assert(file_index_find_by_hash(hash2, &new_index, NULL) == ERROR_NOTFOUND);
-        assert(file_index_find_by_hash(hash3, &new_index, NULL) == ERROR_NOTFOUND);
+        HANDLE_EXCEPTION();
+        assert(file_index_find_by_hash(hash1, &new_index) == NULL);
+        HANDLE_EXCEPTION();
+        assert(file_index_find_by_hash(hash2, &new_index) == NULL);
+        HANDLE_EXCEPTION();
+        assert(file_index_find_by_hash(hash3, &new_index) == NULL);
+        HANDLE_EXCEPTION();
         file_index_destroy(&new_index);
+        HANDLE_EXCEPTION();
 
-        char *name1_rel = NULL;
-        char *name2_rel = NULL;
-        char *name3_rel = NULL;
+        char *name1_rel = malloc(file_get_name_length(name_size));
+        char *name2_rel = malloc(file_get_name_length(name_size));
+        char *name3_rel = malloc(file_get_name_length(name_size));
 
-        file_name_readable(file_info_get_name(info1), name_size, &name1_rel);
-        file_name_readable(file_info_get_name(info2), name_size, &name2_rel);
-        file_name_readable(file_info_get_name(info3), name_size, &name3_rel);
         assert(name1_rel);
         assert(name2_rel);
         assert(name3_rel);
+
+        file_get_name(file_info_get_name(info1), name_size, name1_rel);
+        HANDLE_EXCEPTION();
+        file_get_name(file_info_get_name(info2), name_size, name2_rel);
+        HANDLE_EXCEPTION();
+        file_get_name(file_info_get_name(info3), name_size, name3_rel);
+        HANDLE_EXCEPTION();
 
         char *name1 = malloc(strlen(name1_rel) + strlen(FILE_DIR) + 2);
         strcat(strcat(strcpy(name1, FILE_DIR), "/"), name1_rel);
@@ -159,19 +188,27 @@ int main()
         assert(file_info_get_ref(info3) == 0);
 
         file_index_save(&index);
+        HANDLE_EXCEPTION();
 
         file_index_open(&conf, &new_index);
+        HANDLE_EXCEPTION();
         struct file_info *tmp;
-        assert(file_index_find_by_hash(hash1, &new_index, &tmp) == ERROR_SUCCESS);
+        tmp = file_index_find_by_hash(hash1, &new_index);
+        HANDLE_EXCEPTION();
+        assert(tmp);
         assert(file_info_get_ref(tmp) == 2);
         assert(memcmp(file_info_get_hash(tmp), file_info_get_hash(info1), size) == 0);
         assert(memcmp(file_info_get_name(tmp), file_info_get_name(info1), name_size) == 0);
-        assert(file_index_find_by_hash(hash2, &new_index, &tmp) == ERROR_SUCCESS);
+        tmp = file_index_find_by_hash(hash2, &new_index);
+        HANDLE_EXCEPTION();
+        assert(tmp);
         assert(file_info_get_ref(tmp) == 1);
         assert(memcmp(file_info_get_hash(tmp), file_info_get_hash(info2), size) == 0);
         assert(memcmp(file_info_get_name(tmp), file_info_get_name(info2), name_size) == 0);
-        assert(file_index_find_by_hash(hash3, &new_index, NULL) == ERROR_NOTFOUND);
+        assert(file_index_find_by_hash(hash3, &new_index) == NULL);
+        HANDLE_EXCEPTION();
         file_index_destroy(&new_index);
+        HANDLE_EXCEPTION();
 
         assert(access(name1, F_OK) == 0);
         assert(access(name2, F_OK) == 0);
@@ -187,19 +224,27 @@ int main()
         assert(file_info_get_ref(info3) == 0);
 
         file_index_save(&index);
+        HANDLE_EXCEPTION();
 
         file_index_open(&conf, &new_index);
-        assert(file_index_find_by_hash(hash1, &new_index, NULL) == ERROR_NOTFOUND);
-        assert(file_index_find_by_hash(hash2, &new_index, NULL) == ERROR_NOTFOUND);
-        assert(file_index_find_by_hash(hash3, &new_index, NULL) == ERROR_NOTFOUND);
+        HANDLE_EXCEPTION();
+        assert(file_index_find_by_hash(hash1, &new_index) == NULL);
+        HANDLE_EXCEPTION();
+        assert(file_index_find_by_hash(hash2, &new_index) == NULL);
+        HANDLE_EXCEPTION();
+        assert(file_index_find_by_hash(hash3, &new_index) == NULL);
+        HANDLE_EXCEPTION();
         file_index_destroy(&new_index);
+        HANDLE_EXCEPTION();
 
         assert(access(name1, F_OK) == -1 && errno == ENOENT);
         assert(access(name2, F_OK) == -1 && errno == ENOENT);
         assert(access(name3, F_OK) == -1 && errno == ENOENT);
 
         file_index_destroy(&index);
+        HANDLE_EXCEPTION();
         config_destroy(&conf);
+        HANDLE_EXCEPTION();
         rmdir(FILE_DIR);
         unlink("tmp1");
         unlink("tmp2");
@@ -234,69 +279,109 @@ int main()
         branch_index_init(&conf, &index);
 
         branch_index_new_branch("branch1", &index);
+        HANDLE_EXCEPTION();
         branch_index_new_branch("branch2", &index);
+        HANDLE_EXCEPTION();
         branch_index_new_branch("branch3", &index);
+        HANDLE_EXCEPTION();
 
         const char* file1;
         const char* file2;
         const char* file3;
 
-        assert(branch_index_find("branch1", &index, &file1) == ERROR_SUCCESS);
-        assert(branch_index_find("branch2", &index, &file2) == ERROR_SUCCESS);
-        assert(branch_index_find("branch3", &index, &file3) == ERROR_SUCCESS);
+        file1 = branch_index_find("branch1", &index);
+        HANDLE_EXCEPTION();
+        file2 = branch_index_find("branch2", &index);
+        HANDLE_EXCEPTION();
+        file3 = branch_index_find("branch3", &index);
+        HANDLE_EXCEPTION();
+        assert(file1);
+        assert(file2);
+        assert(file3);
 
         branch_index_save(&index);
+        HANDLE_EXCEPTION();
 
         branch_index_open(&conf, &check_index);
+        HANDLE_EXCEPTION();
 
         const char* check_file1;
         const char* check_file2;
         const char* check_file3;
 
-        assert(branch_index_find("branch1", &check_index, &check_file1) == ERROR_SUCCESS);
-        assert(branch_index_find("branch2", &check_index, &check_file2) == ERROR_SUCCESS);
-        assert(branch_index_find("branch3", &check_index, &check_file3) == ERROR_SUCCESS);
+        check_file1 = branch_index_find("branch1", &index);
+        HANDLE_EXCEPTION();
+        check_file2 = branch_index_find("branch2", &index);
+        HANDLE_EXCEPTION();
+        check_file3 = branch_index_find("branch3", &index);
+        HANDLE_EXCEPTION();
+        assert(check_file1);
+        assert(check_file2);
+        assert(check_file3);
 
         assert(strcmp(file1, check_file1) == 0);
         assert(strcmp(file2, check_file2) == 0);
         assert(strcmp(file3, check_file3) == 0);
 
         branch_index_destroy(&check_index);
+        HANDLE_EXCEPTION();
 
         branch_index_delete_branch("branch2", &index);
+        HANDLE_EXCEPTION();
 
         branch_index_save(&index);
+        HANDLE_EXCEPTION();
 
         branch_index_open(&conf, &check_index);
+        HANDLE_EXCEPTION();
 
-        assert(branch_index_find("branch1", &check_index, &check_file1) == ERROR_SUCCESS);
-        assert(branch_index_find("branch2", &check_index, &check_file2) == ERROR_NOTFOUND);
-        assert(branch_index_find("branch3", &check_index, &check_file3) == ERROR_SUCCESS);
+        check_file1 = branch_index_find("branch1", &index);
+        HANDLE_EXCEPTION();
+        check_file2 = branch_index_find("branch2", &index);
+        HANDLE_EXCEPTION();
+        check_file3 = branch_index_find("branch3", &index);
+        HANDLE_EXCEPTION();
+        assert(check_file1);
+        assert(!check_file2);
+        assert(check_file3);
 
         assert(strcmp(file1, check_file1) == 0);
         assert(strcmp(file3, check_file3) == 0);
 
         branch_index_destroy(&check_index);
+        HANDLE_EXCEPTION();
         branch_index_destroy(&index);
+        HANDLE_EXCEPTION();
         config_destroy(&conf);
+        HANDLE_EXCEPTION();
         rmdir(FILE_DIR);
         rmdir(BRANCH_DIR);
         unlink("conf");
         unlink("index");
         unlink("branch_index");
     }
+    
     //Branch test
     {
         struct config conf;
         config_init("conf", &conf);
+        HANDLE_EXCEPTION();
         config_set("branch_index_path", "branch_index", &conf);
+        HANDLE_EXCEPTION();
         config_set("branch_dir", BRANCH_DIR, &conf);
+        HANDLE_EXCEPTION();
         config_set("branch_digest", DIGEST, &conf);
+        HANDLE_EXCEPTION();
         config_set("branch_name_len", "32", &conf);
+        HANDLE_EXCEPTION();
         config_set("file_index_path", "index", &conf);
+        HANDLE_EXCEPTION();
         config_set("file_dir", FILE_DIR, &conf);
+        HANDLE_EXCEPTION();
         config_set("file_digest", DIGEST, &conf);
+        HANDLE_EXCEPTION();
         config_set("file_name_len", "32", &conf);
+        HANDLE_EXCEPTION();
 
         mkdir(FILE_DIR, S_IRWXU | S_IRWXG | S_IRWXO);
         mkdir(BRANCH_DIR, S_IRWXU | S_IRWXG | S_IRWXO);
@@ -322,25 +407,37 @@ int main()
         struct branch_info branch2;
         struct branch_info branch3;
         branch_index_init(&conf, &index);
+        HANDLE_EXCEPTION();
 
         branch_index_new_branch("empty", &index);
+        HANDLE_EXCEPTION();
         branch_index_new_branch("filled1", &index);
+        HANDLE_EXCEPTION();
         branch_index_new_branch("filled2", &index);
+        HANDLE_EXCEPTION();
 
         const char* names[3];
         assert(branch_index_count(&index) == 3);
+        HANDLE_EXCEPTION();
         branch_index_get_names(names, &index);
+        HANDLE_EXCEPTION();
         assert(strcmp(names[0], "empty") == 0 || strcmp(names[1], "empty") == 0 ||strcmp(names[2], "empty") == 0);
         assert(strcmp(names[0], "filled1") == 0 || strcmp(names[1], "filled1") == 0 ||strcmp(names[2], "filled1") == 0);
         assert(strcmp(names[0], "filled2") == 0 || strcmp(names[1], "filled2") == 0 ||strcmp(names[2], "filled2") == 0);
 /*--------------------------------------------------------------------------------------------------------------------*/
         branch_index_get_branch("empty", &index, &branch1);
+        HANDLE_EXCEPTION();
         branch_index_get_branch("filled1", &index, &branch2);
+        HANDLE_EXCEPTION();
         branch_index_get_branch("filled2", &index, &branch3);
+        HANDLE_EXCEPTION();
 
-        branch_extract(&branch1, "test_out/empty");
-        branch_extract(&branch2, "test_out/filled1");
-        branch_extract(&branch3, "test_out/filled2");
+        branch_extract("test_out/empty", &branch1);
+        HANDLE_EXCEPTION();
+        branch_extract("test_out/filled1", &branch2);
+        HANDLE_EXCEPTION();
+        branch_extract("test_out/filled2", &branch3);
+        HANDLE_EXCEPTION();
 
         assert(access("test_out/empty", F_OK) == 0);
         assert(access("test_out/filled1", F_OK) == 0);
@@ -353,24 +450,37 @@ int main()
         system("rm -rf test_out");
 
         branch_save(&branch1);
+        HANDLE_EXCEPTION();
         branch_save(&branch2);
+        HANDLE_EXCEPTION();
         //Do not save 3 for testing
 
         branch_destroy(&branch1);
+        HANDLE_EXCEPTION();
         branch_destroy(&branch2);
+        HANDLE_EXCEPTION();
         branch_destroy(&branch3);
+        HANDLE_EXCEPTION();
 
         branch_index_save(&index);
+        HANDLE_EXCEPTION();
 
         branch_index_open(&conf, &check_index);
+        HANDLE_EXCEPTION();
 /*--------------------------------------------------------------------------------------------------------------------*/
         branch_index_get_branch("empty", &check_index, &branch1);
+        HANDLE_EXCEPTION();
         branch_index_get_branch("filled1", &check_index, &branch2);
+        HANDLE_EXCEPTION();
         branch_index_get_branch("filled2", &check_index, &branch3);
+        HANDLE_EXCEPTION();
 
-        branch_extract(&branch1, "test_out/empty");
-        branch_extract(&branch2, "test_out/filled1");
-        branch_extract(&branch3, "test_out/filled2");
+        branch_extract("test_out/empty", &branch1);
+        HANDLE_EXCEPTION();
+        branch_extract("test_out/filled1", &branch2);
+        HANDLE_EXCEPTION();
+        branch_extract("test_out/filled2", &branch3);
+        HANDLE_EXCEPTION();
 
         assert(access("test_out/empty", F_OK) == 0);
         assert(access("test_out/filled1", F_OK) == 0);
@@ -382,17 +492,23 @@ int main()
 
         system("rm -rf test_out");
 
-        branch_update(&branch1, "test_in/empty");
-        branch_update(&branch2, "test_in/filled1");
-        branch_update(&branch3, "test_in/filled2");
+        branch_update("test_in/empty", &branch1);
+        branch_update("test_in/filled1", &branch2);
+        branch_update("test_in/filled2", &branch3);
 
         branch_save(&branch1);
+        HANDLE_EXCEPTION();
         branch_save(&branch2);
+        HANDLE_EXCEPTION();
         branch_save(&branch3);
+        HANDLE_EXCEPTION();
 
-        branch_extract(&branch1, "test_out/empty");
-        branch_extract(&branch2, "test_out/filled1");
-        branch_extract(&branch3, "test_out/filled2");
+        branch_extract("test_out/empty", &branch1);
+        HANDLE_EXCEPTION();
+        branch_extract("test_out/filled1", &branch2);
+        HANDLE_EXCEPTION();
+        branch_extract("test_out/filled2", &branch3);
+        HANDLE_EXCEPTION();
 
         assert(is_directory_empty("test_out/empty"));
         assert(system("diff test_in/filled1/file1 test_out/filled1/file1") == 0);
@@ -408,16 +524,25 @@ int main()
         system("rm -rf test_out");
 
         branch_destroy(&branch1);
+        HANDLE_EXCEPTION();
         branch_destroy(&branch2);
+        HANDLE_EXCEPTION();
         branch_destroy(&branch3);
+        HANDLE_EXCEPTION();
 /*--------------------------------------------------------------------------------------------------------------------*/
         branch_index_get_branch("empty", &check_index, &branch1);
+        HANDLE_EXCEPTION();
         branch_index_get_branch("filled1", &check_index, &branch2);
+        HANDLE_EXCEPTION();
         branch_index_get_branch("filled2", &check_index, &branch3);
+        HANDLE_EXCEPTION();
 
-        branch_extract(&branch1, "test_out/empty");
-        branch_extract(&branch2, "test_out/filled1");
-        branch_extract(&branch3, "test_out/filled2");
+        branch_extract("test_out/empty", &branch1);
+        HANDLE_EXCEPTION();
+        branch_extract("test_out/filled1", &branch2);
+        HANDLE_EXCEPTION();
+        branch_extract("test_out/filled2", &branch3);
+        HANDLE_EXCEPTION();
 
         assert(access("test_out/empty", F_OK) == 0);
         assert(access("test_out/filled1", F_OK) == 0);
@@ -436,17 +561,25 @@ int main()
 
         system("rm -rf test_out");
 
-        branch_update(&branch1, "test_in/filled2");
-        branch_update(&branch2, "test_in/empty");
-        branch_update(&branch3, "test_in/filled1");
+        branch_update("test_in/filled2", &branch1);
+        HANDLE_EXCEPTION();
+        branch_update("test_in/empty", &branch2);
+        HANDLE_EXCEPTION();
+        branch_update("test_in/filled1", &branch3);
+        HANDLE_EXCEPTION();
 
         branch_save(&branch1);
+        HANDLE_EXCEPTION();
         branch_save(&branch2);
+        HANDLE_EXCEPTION();
         //Do not save 3 for testing
 
-        branch_extract(&branch1, "test_out/filled2");
-        branch_extract(&branch2, "test_out/empty");
-        branch_extract(&branch3, "test_out/filled1");
+        branch_extract("test_out/filled2", &branch1);
+        HANDLE_EXCEPTION();
+        branch_extract("test_out/empty", &branch2);
+        HANDLE_EXCEPTION();
+        branch_extract("test_out/filled1", &branch3);
+        HANDLE_EXCEPTION();
 
         assert(is_directory_empty("test_out/empty"));
         assert(system("diff test_in/filled2/file1 test_out/filled1/file1") == 0);
@@ -459,16 +592,25 @@ int main()
         system("rm -rf test_out");
 
         branch_destroy(&branch1);
+        HANDLE_EXCEPTION();
         branch_destroy(&branch2);
+        HANDLE_EXCEPTION();
         branch_destroy(&branch3);
+        HANDLE_EXCEPTION();
 /*--------------------------------------------------------------------------------------------------------------------*/
         branch_index_get_branch("empty", &check_index, &branch1);
+        HANDLE_EXCEPTION();
         branch_index_get_branch("filled1", &check_index, &branch2);
+        HANDLE_EXCEPTION();
         branch_index_get_branch("filled2", &check_index, &branch3);
+        HANDLE_EXCEPTION();
 
-        branch_extract(&branch1, "test_out/filled2");
-        branch_extract(&branch2, "test_out/empty");
-        branch_extract(&branch3, "test_out/filled1");
+        branch_extract("test_out/filled2", &branch1);
+        HANDLE_EXCEPTION();
+        branch_extract("test_out/empty", &branch2);
+        HANDLE_EXCEPTION();
+        branch_extract("test_out/filled1", &branch3);
+        HANDLE_EXCEPTION();
 
         assert(is_directory_empty("test_out/empty"));
         assert(system("diff test_in/filled2/file1 test_out/filled1/file1") == 0);
@@ -480,43 +622,62 @@ int main()
 
         system("rm -rf test_out");
 
-        branch_update(&branch1, "test_in/empty");
-        branch_update(&branch2, "test_in/filled1");
-        branch_update(&branch3, "test_in/filled2");
+        branch_update("test_in/empty", &branch1);
+        branch_update("test_in/filled1", &branch2);
+        branch_update("test_in/filled2", &branch3);
 
         branch_save(&branch1);
+        HANDLE_EXCEPTION();
         branch_save(&branch2);
+        HANDLE_EXCEPTION();
         //Do not save 3 for testing
 
         branch_destroy(&branch1);
+        HANDLE_EXCEPTION();
         branch_destroy(&branch2);
+        HANDLE_EXCEPTION();
         branch_destroy(&branch3);
+        HANDLE_EXCEPTION();
 
         //Check index has a more recent version of file index, passing &index would lead to corruption
         branch_index_delete_branch("filled1", &check_index);
+        HANDLE_EXCEPTION();
         branch_index_save(&check_index);
+        HANDLE_EXCEPTION();
 
         assert(branch_index_count(&check_index) == 2);
         names[0] = NULL;
         names[1] = NULL;
         branch_index_get_names(names, &check_index);
+        HANDLE_EXCEPTION();
         assert(strcmp(names[0], "empty") == 0 || strcmp(names[1], "empty") == 0);
         assert(strcmp(names[0], "filled2") == 0 || strcmp(names[1], "filled2") == 0);
 
         branch_index_destroy(&check_index);
+        HANDLE_EXCEPTION();
 /*--------------------------------------------------------------------------------------------------------------------*/
         branch_index_open(&conf, &check_index);
+        HANDLE_EXCEPTION();
 
         branch_index_get_branch("empty", &check_index, &branch1);
-        assert(branch_index_get_branch("filled1", &check_index, &branch2) == ERROR_NOTFOUND);
+        HANDLE_EXCEPTION();
+        branch_index_get_branch("filled1", &check_index, &branch2);
+        assert(EXCEPTION_IS_THROWN);
+        EXCEPTION_CLEAR();
         branch_index_get_branch("filled2", &check_index, &branch3);
+        HANDLE_EXCEPTION();
 
         branch_destroy(&branch1);
+        HANDLE_EXCEPTION();
         branch_destroy(&branch3);
+        HANDLE_EXCEPTION();
         branch_index_destroy(&check_index);
+        HANDLE_EXCEPTION();
 /*--------------------------------------------------------------------------------------------------------------------*/
         branch_index_destroy(&index);
+        HANDLE_EXCEPTION();
         config_destroy(&conf);
+        HANDLE_EXCEPTION();
         system("rm -rf "FILE_DIR);
         system("rm -rf "BRANCH_DIR);
         system("rm -rf test_in");

@@ -1,8 +1,8 @@
 #include "config.h"
-#include <ec.h>
 #include <uthash.h>
 #include <limits.h>
 #include <errno.h>
+#include <CTransform/CEasyException/exception.h>
 
 struct config_key_value
 {
@@ -11,24 +11,25 @@ struct config_key_value
     UT_hash_handle hh;
 };
 
-int config_init(const char* path, struct config* conf)
+void config_init(const char* path, struct config* conf)
 {
     FILE* file = fopen(path, "w");
     if(file == NULL)
     {
-        return ERROR_SYSTEM;
+        EXCEPTION_THROW(errno, "Failed to open config file \"%s\"", path);
+        return;
     }
     conf->file = file;
     conf->hmap = NULL;
-    return ERROR_SUCCESS;
 }
 
-int config_load(const char* path, struct config* conf)
+void config_load(const char* path, struct config* conf)
 {
     FILE* file = fopen(path, "r+");
     if(file == NULL)
     {
-        return ERROR_SYSTEM;
+        EXCEPTION_THROW(errno, "Failed to open config file \"%s\"", path);
+        return;
     }
     conf->file = file;
     conf->hmap = NULL;
@@ -60,32 +61,31 @@ int config_load(const char* path, struct config* conf)
     }
     if(ferror(file))
     {
-        int tmperrno = errno;
+        EXCEPTION_THROW(errno, "Failed to read from config file \"%s\"", path);
         config_destroy(conf);
-        errno = tmperrno;
-        return ERROR_SYSTEM;
+        return;
     }
-    return ERROR_SUCCESS;
 }
 
-int config_save(struct config* conf)
+void config_save(struct config* conf)
 {
     if (fseek(conf->file, 0, SEEK_SET) < 0)
     {
-        return ERROR_SYSTEM;
+        EXCEPTION_THROW(errno, "%s", "Failed to rewind config file");
+        return;
     }
     struct config_key_value *val;
     for (val = conf->hmap; val != NULL; val = val->hh.next)
     {
         if (fprintf(conf->file, "%s %s\n", val->key, val->value) < 0)
         {
-            return ERROR_SYSTEM;
+            EXCEPTION_THROW(errno, "%s", "Failed to write to config file");
+            return;
         }
     }
-    return ERROR_SUCCESS;
 }
 
-extern int config_destroy(struct config* conf)
+extern void config_destroy(struct config* conf)
 {
     struct config_key_value *val, *tmp;
     HASH_ITER(hh, conf->hmap, val, tmp) {
@@ -96,13 +96,12 @@ extern int config_destroy(struct config* conf)
     }
     if(fclose(conf->file) < 0)
     {
-        return ERROR_SYSTEM;
+        EXCEPTION_THROW(errno, "%s", "Failed to close to config file");
     }
     conf->file = NULL;
-    return ERROR_SUCCESS;
 }
 
-int config_set(const char* key, const char* value, struct config* conf)
+void config_set(const char* key, const char* value, struct config* conf)
 {
     struct config_key_value* val = NULL;
     HASH_FIND_STR(conf->hmap, key, val);
@@ -110,20 +109,23 @@ int config_set(const char* key, const char* value, struct config* conf)
         val = malloc(sizeof(struct config_key_value));
         if(val == NULL)
         {
-            return ERROR_SYSTEM;
+            EXCEPTION_THROW_NOMSG(ENOMEM);
+            return;
         }
         val->key = strdup(key);
         if(!val->key)
         {
+            EXCEPTION_THROW_NOMSG(ENOMEM);
             free(val);
-            return ERROR_SYSTEM;
+            return;
         }
         val->value = strdup(value);
         if(!val->value)
         {
+            EXCEPTION_THROW_NOMSG(ENOMEM);
             free(val->key);
             free(val);
-            return ERROR_SYSTEM;
+            return;
         }
         HASH_ADD_STR( conf->hmap, key, val );
     }
@@ -133,12 +135,12 @@ int config_set(const char* key, const char* value, struct config* conf)
         val->value = strdup(value);
         if(!val->value)
         {
+            EXCEPTION_THROW_NOMSG(ENOMEM);
             val->value = tmp;
-            return ERROR_SYSTEM;
+            return;
         }
         free(tmp);
     }
-    return ERROR_SUCCESS;
 }
 
 const char* config_get(const char* key, const struct config* conf)

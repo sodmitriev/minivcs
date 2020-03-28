@@ -1,16 +1,14 @@
 #include "files.h"
 #include "storage.h"
-#include "name.h"
-#include <file/hash.h>
-#include <ec.h>
+#include <file/operations.h>
 #include <uthash.h>
 #include <assert.h>
-#include <file/encode.h>
 #include <limits.h>
 #include <sys/random.h>
 #include <dirent.h>
 #include <errno.h>
 #include <zconf.h>
+#include <CTransform/CEasyException/exception.h>
 
 struct file_info
 {
@@ -33,126 +31,145 @@ struct file_index_value_by_name
     UT_hash_handle hh;
 };
 
-static int gen_unique_name(const struct file_index* index, unsigned char** name)
+static unsigned char* gen_unique_name(const struct file_index* index)
 {
-    *name = malloc(index->name_size);
-    if(!*name)
+    unsigned char* name = malloc(index->name_size);
+    if(!name)
     {
-        return ERROR_SYSTEM;
+        EXCEPTION_THROW_NOMSG(ENOMEM);
+        return NULL;
     }
-    int err;
+    struct file_info* info = NULL;
     do
     {
-        if (getrandom(*name, index->name_size, 0) != index->name_size)
+        ssize_t err = getrandom(name, index->name_size, 0);
+        if (err < 0 || (size_t) err != index->name_size)
         {
-            free(*name);
-            return ERROR_SYSTEM;
+            EXCEPTION_THROW(errno, "%s", "Failed to generate file name");
+            free(name);
+            return NULL;
         }
-    } while((err = file_index_find_by_name(*name, index, NULL)) == ERROR_SUCCESS);
-    if(err != ERROR_NOTFOUND)
-    {
-        free(*name);
-        return err;
-    }
-    return ERROR_SUCCESS;
+        info = file_index_find_by_name(name, index);
+        if(EXCEPTION_IS_THROWN)
+        {
+            free(name);
+            return NULL;
+        }
+    } while(info);
+    return name;
 }
 
-static int file_index_init_mode(const struct config* conf, struct file_index* index, const char* mode)
+#define __CHECK_PARAM(name)\
+if(!name) {EXCEPTION_THROW(EINVAL, "\"%s\" is not set in config", #name); return;} ((void)(0))
+
+static void file_index_init_mode(const struct config* conf, struct file_index* index, const char* mode)
 {
     assert(conf);
     assert(index);
-    const char* path = config_get("file_index_path", conf);
+    const char* file_index_path = config_get("file_index_path", conf);
     const char* file_dir = config_get("file_dir", conf);
-    const char* digest = config_get("file_digest", conf);
-    const char* name_len_str = config_get("file_name_len", conf);
-    if(!path || !file_dir || !digest || !name_len_str)
-    {
-        return ERROR_CONFIG;
-    }
+    const char* file_name_len = config_get("file_name_len", conf);
+    __CHECK_PARAM(file_index_path);
+    __CHECK_PARAM(file_dir);
+    __CHECK_PARAM(file_name_len);
 
     {
         DIR* dir = opendir(file_dir);
         if(dir == NULL)
         {
-            return ERROR_CONFIG;
+            EXCEPTION_THROW(errno, "Failed to open \"%s\" directory", file_dir);
+            return;
         }
         closedir(dir);
     }
 
     char* eptr;
-    index->name_size = strtoul(name_len_str, &eptr, 10);
-    if(eptr == name_len_str || index->name_size > NAME_MAX)
+    errno = 0;
+    index->name_size = strtoul(file_name_len, &eptr, 10);
+    if(eptr == file_name_len || index->name_size > NAME_MAX || errno != 0)
     {
-        return ERROR_CONFIG;
+        if(errno == 0)
+        {
+            errno = EINVAL;
+        }
+        EXCEPTION_THROW(errno, "\"%s\" is not a valid file name length", file_name_len);
+        return;
     }
 
-    index->digest = digest;
-    FILE* file = fopen(path, mode);
+    FILE* file = fopen(file_index_path, mode);
     if(!file)
     {
-        return ERROR_SYSTEM;
+        EXCEPTION_THROW(errno, "Failed to open file index \"%s\"", file_index_path);
+        return;
     }
     index->file = file;
     index->by_hash = NULL;
     index->by_name = NULL;
-    index->path = path;
+    index->path = file_index_path;
     index->file_dir = file_dir;
-    return ERROR_SUCCESS;
+    index->conf = conf;
 }
 
-static int file_index_insert_prepared(const unsigned char* hash, const unsigned char* name, struct file_index* index, struct file_info** file)
+static struct file_info* file_index_insert_prepared(const unsigned char* hash, const unsigned char* name, struct file_index* index)
 {
     assert(hash);
     assert(name);
     assert(index);
 
-    int err;
-    size_t hsize;
-    err = hash_size(index->digest, &hsize);
-    if(err != ERROR_SUCCESS)
+    size_t hsize = file_hash_size(index->conf);
+    if(EXCEPTION_IS_THROWN)
     {
-        return err;
-    }
-    ENCODE(hash, hsize, err);
-    if(err != ERROR_SUCCESS)
-    {
-        return err;
+        return NULL;
     }
 
+    char* hash_encoded;
     char* name_encoded;
-    err = file_name_readable(name, index->name_size, &name_encoded);
-    if(err != ERROR_SUCCESS)
+
+    hash_encoded = malloc(file_get_name_length(hsize));
+    if(!hash_encoded)
     {
-        free(hash_encoded);
-        return err;
+        EXCEPTION_THROW_NOMSG(ENOMEM);
+        return NULL;
+    }
+
+    name_encoded = malloc(file_get_name_length(index->name_size));
+    if(!name_encoded)
+    {
+        EXCEPTION_THROW_NOMSG(ENOMEM);
+        goto cleanup_hash;
+    }
+
+    file_get_name(hash, hsize, hash_encoded);
+    if(EXCEPTION_IS_THROWN)
+    {
+        goto cleanup_name;
+    }
+    file_get_name(name, index->name_size, name_encoded);
+    if(EXCEPTION_IS_THROWN)
+    {
+        goto cleanup_name;
     }
 
     struct file_info* info = malloc(sizeof(struct file_info));
     if(!info)
     {
-        free(hash_encoded);
-        free(name_encoded);
-        return ERROR_SYSTEM;
+        EXCEPTION_THROW_NOMSG(ENOMEM);
+        goto cleanup_name;
     }
 
     info->hash = malloc(hsize);
     if(!info->hash)
     {
-        free(hash_encoded);
-        free(name_encoded);
-        free(info);
-        return ERROR_SYSTEM;
+        EXCEPTION_THROW_NOMSG(ENOMEM);
+        goto cleanup_info;
     }
     memcpy(info->hash, hash, hsize);
 
     info->name = malloc(index->name_size);
     if(!info->name)
     {
-        free(hash_encoded);
-        free(name_encoded);
-        free(info->hash);
-        free(info);
-        return ERROR_SYSTEM;
+        EXCEPTION_THROW_NOMSG(ENOMEM);
+        goto cleanup_info_hash;
     }
     memcpy(info->name, name, index->name_size);
 
@@ -166,12 +183,8 @@ static int file_index_insert_prepared(const unsigned char* hash, const unsigned 
     by_hash = malloc(sizeof(struct file_index_value_by_hash));
     if(by_hash == NULL)
     {
-        free(hash_encoded);
-        free(name_encoded);
-        free(info->hash);
-        free(info->name);
-        free(info);
-        return ERROR_SYSTEM;
+        EXCEPTION_THROW_NOMSG(ENOMEM);
+        goto cleanup_info_name;
     }
     by_hash->hash = hash_encoded;
     by_hash->value = info;
@@ -184,106 +197,110 @@ static int file_index_insert_prepared(const unsigned char* hash, const unsigned 
     by_name = malloc(sizeof(struct file_index_value_by_name));
     if(by_name == NULL)
     {
-        free(hash_encoded);
-        free(name_encoded);
-        free(info->hash);
-        free(info->name);
-        free(info);
-        free(by_hash);
-        return ERROR_SYSTEM;
+        EXCEPTION_THROW_NOMSG(ENOMEM);
+        goto cleanup_by_hash;
     }
     by_name->name = name_encoded;
     by_name->value = info;
 
     HASH_ADD_STR(index->by_hash, hash, by_hash );
     HASH_ADD_STR(index->by_name, name, by_name );
-    if(file)
-    {
-        *file = info;
-    }
 
-    return ERROR_SUCCESS;
+    return info;
+
+    cleanup_by_hash:
+    free(by_hash);
+    cleanup_info_name:
+    free(info->name);
+    cleanup_info_hash:
+    free(info->hash);
+    cleanup_info:
+    free(info);
+    cleanup_name:
+    free(name_encoded);
+    cleanup_hash:
+    free(hash_encoded);
+    return NULL;
 }
 
-int file_index_init(const struct config* conf, struct file_index* index)
+void file_index_init(const struct config* conf, struct file_index* index)
 {
-    return file_index_init_mode(conf, index, "w");
+    file_index_init_mode(conf, index, "w");
 }
 
-int file_index_open(const struct config* conf, struct file_index* index)
+void file_index_open(const struct config* conf, struct file_index* index)
 {
     assert(conf);
     assert(index);
-    int err = file_index_init_mode(conf, index, "r+");
-    if(err != ERROR_SUCCESS)
+    file_index_init_mode(conf, index, "r+");
+    if(EXCEPTION_IS_THROWN)
     {
-        return err;
+        return;
     }
-    size_t hsize;
-    err = hash_size(index->digest, &hsize);
-    if(err != ERROR_SUCCESS)
+    size_t hsize = file_hash_size(conf);
+    if(EXCEPTION_IS_THROWN)
     {
         file_index_destroy(index);
-        return err;
+        return;
     }
     const size_t row_size = hsize + index->name_size + sizeof(((struct file_info*)(0))->ref_count);
     unsigned char* buf = malloc(row_size);
     if(!buf)
     {
+        EXCEPTION_THROW_NOMSG(ENOMEM);
         file_index_destroy(index);
-        return ERROR_SYSTEM;
+        return;
     }
     while(fread(buf, 1, row_size, index->file) == row_size)
     {
         size_t ref;
         memcpy(&ref, buf + hsize + index->name_size, sizeof(ref));
-        struct file_info* info;
-        err = file_index_insert_prepared(buf, buf + hsize, index, &info);
-        if(err != ERROR_SUCCESS)
+        struct file_info* info = file_index_insert_prepared(buf, buf + hsize, index);
+        if(EXCEPTION_IS_THROWN)
         {
             file_index_destroy(index);
             free(buf);
-            return err;
+            return;
         }
         info->ref_count = ref;
     }
     free(buf);
     if(ferror(index->file))
     {
+        EXCEPTION_THROW(errno, "%s", "Failed to write to file index");
         file_index_destroy(index);
-        return ERROR_SYSTEM;
+        return;
     }
-    return ERROR_SUCCESS;
 }
 
-int file_index_save(struct file_index* index)
+void file_index_save(struct file_index* index)
 {
     assert(index);
     assert(index->file);
-    size_t hsize;
-    int err = hash_size(index->digest, &hsize);
-    if(err != ERROR_SUCCESS)
+    size_t hsize = file_hash_size(index->conf);
+    if(EXCEPTION_IS_THROWN)
     {
-        return err;
+        return;
     }
     const char* storage = ".~file_index";
 
     if (fseek(index->file, 0, SEEK_SET) < 0)
     {
-        return ERROR_SYSTEM;
+        EXCEPTION_THROW(errno, "%s", "Failed to rewind file index");
+        return;
     }
 
-    if((err = store_file(storage, index->path)) != ERROR_SUCCESS)
+    store_file(storage, index->path);
+    if(EXCEPTION_IS_THROWN)
     {
-        return err;
+        return;
     }
 
     if (truncate(index->path, 0) < 0)
     {
-        int tmperrno = errno;
+        EXCEPTION_THROW(errno, "%s", "Failed to truncate file index file");
         restore_file(storage, index->path);
-        errno = tmperrno;
-        return ERROR_SYSTEM;
+        return;
     }
 
     struct file_index_value_by_name *val;
@@ -293,33 +310,29 @@ int file_index_save(struct file_index* index)
         {
             if (fwrite(val->value->hash, 1, hsize, index->file) != hsize)
             {
-                int tmperrno = errno;
+                EXCEPTION_THROW(errno, "%s", "Failed to write to file index file");
                 restore_file(storage, index->path);
-                errno = tmperrno;
-                return ERROR_SYSTEM;
+                return;
             }
             if (fwrite(val->value->name, 1, index->name_size, index->file) != index->name_size)
             {
-                int tmperrno = errno;
+                EXCEPTION_THROW(errno, "%s", "Failed to write to file index file");
                 restore_file(storage, index->path);
-                errno = tmperrno;
-                return ERROR_SYSTEM;
+                return;
             }
             if (fwrite(&val->value->ref_count, sizeof(val->value->ref_count), 1, index->file) != 1)
             {
-                int tmperrno = errno;
+                EXCEPTION_THROW(errno, "%s", "Failed to write to file index file");
                 restore_file(storage, index->path);
-                errno = tmperrno;
-                return ERROR_SYSTEM;
+                return;
             }
         }
     }
     if(fflush(index->file) < 0)
     {
-        int tmperrno = errno;
+        EXCEPTION_THROW(errno, "%s", "Failed to flush file index file");
         restore_file(storage, index->path);
-        errno = tmperrno;
-        return ERROR_SYSTEM;
+        return;
     }
     reset_storage(storage);
     size_t dir_path_len = strlen(index->file_dir);
@@ -353,10 +366,9 @@ int file_index_save(struct file_index* index)
         }
         free(name);
     } //else leave the garbage, nothing will break
-    return ERROR_SUCCESS;
 }
 
-int file_index_destroy(struct file_index* index)
+void file_index_destroy(struct file_index* index)
 {
     assert(index);
     assert(index->file);
@@ -384,94 +396,95 @@ int file_index_destroy(struct file_index* index)
     }
     if(fclose(index->file) < 0)
     {
-        return ERROR_SYSTEM;
+        EXCEPTION_THROW(errno, "%s", "Failed to close index file file descriptor");
     }
     index->file = NULL;
-    return ERROR_SUCCESS;
 }
 
-int file_index_find_by_hash(const unsigned char *hash, const struct file_index *index, struct file_info **info)
+struct file_info* file_index_find_by_hash(const unsigned char *hash, const struct file_index *index)
 {
     assert(hash);
     assert(index);
-    size_t hsize;
-    int err = hash_size(index->digest, &hsize);
-    if(err != ERROR_SUCCESS)
+
+    size_t hsize = file_hash_size(index->conf);
+    if(EXCEPTION_IS_THROWN)
     {
-        return err;
+        return NULL;
     }
-    ENCODE(hash, hsize, err);
-    if(err != ERROR_SUCCESS)
+
+    char* hash_encoded = malloc(file_get_name_length(hsize));
+    if(!hash_encoded)
     {
-        return err;
+        EXCEPTION_THROW_NOMSG(ENOMEM);
+        return NULL;
+    }
+
+    file_get_name(hash, hsize, hash_encoded);
+    if(EXCEPTION_IS_THROWN)
+    {
+        free(hash_encoded);
+        return NULL;
     }
 
     struct file_index_value_by_hash* val = NULL;
     HASH_FIND_STR(index->by_hash, hash_encoded, val);
     free(hash_encoded);
     if (val==NULL) {
-        return ERROR_NOTFOUND;
+        return NULL;
     }
-    if(info)
-    {
-        *info = val->value;
-    }
-    return ERROR_SUCCESS;
+    return val->value;
 }
 
-int file_index_find_by_name(const unsigned char *name, const struct file_index *index, struct file_info **info)
+struct file_info* file_index_find_by_name(const unsigned char *name, const struct file_index *index)
 {
     assert(name);
     assert(index);
 
-    int err;
-    char* name_encoded;
-    err = file_name_readable(name, index->name_size, &name_encoded);
-    if(err != ERROR_SUCCESS)
+    char* name_encoded = malloc(file_get_name_length(index->name_size));
+    if(!name_encoded)
     {
-        return err;
+        EXCEPTION_THROW_NOMSG(ENOMEM);
+        return NULL;
+    }
+    file_get_name(name, index->name_size, name_encoded);
+    if(EXCEPTION_IS_THROWN)
+    {
+        free(name_encoded);
+        return NULL;
     }
 
     struct file_index_value_by_name* val = NULL;
     HASH_FIND_STR(index->by_name, name_encoded, val);
     free(name_encoded);
     if (val==NULL) {
-        return ERROR_NOTFOUND;
+        return NULL;
     }
-    if(info)
-    {
-        *info = val->value;
-    }
-    return ERROR_SUCCESS;
+    return val->value;
 }
 
-int file_index_insert(const unsigned char* hash, struct file_index* index, struct file_info** file)
+struct file_info* file_index_insert(const unsigned char* hash, struct file_index* index)
 {
     assert(hash);
     assert(index);
 
-    unsigned char* name;
-    int err = gen_unique_name(index, &name);
-    if(err != ERROR_SUCCESS)
+    unsigned char* name = gen_unique_name(index);
+    if(EXCEPTION_IS_THROWN)
     {
-        return err;
+        return NULL;
     }
-    err = file_index_insert_prepared(hash, name, index, file);
+    struct file_info* ret = file_index_insert_prepared(hash, name, index);
     free(name);
-    return err;
+    return ret;
 }
 
 size_t file_index_hash_size(const struct file_index* index)
 {
-    size_t ret;
-    int err = hash_size(index->digest, &ret);
-    assert(err == ERROR_SUCCESS);
-    return ret;
+    return file_hash_size(index->conf);
 }
 
-const char* file_index_hash_digest(const struct file_index* index)
+const struct config* file_index_config(const struct file_index* index)
 {
-    return index->digest;
+    return index->conf;
 }
 
 const char* file_index_file_dir(const struct file_index* index)
@@ -483,8 +496,6 @@ size_t file_index_name_size(struct file_index* index)
 {
     return index->name_size;
 }
-
-
 
 extern void file_info_add_ref(struct file_info* file)
 {
