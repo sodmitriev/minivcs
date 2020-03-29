@@ -113,60 +113,8 @@ typedef struct
     const char* file_cipher;
 } file_transform_info;
 
-static file_transform_info get_transform_info(const struct config* conf)
+void file_store(const char* src, const char* dest, const ftransform_ctx* ctx)
 {
-    file_transform_info ret = {0, NULL, NULL};
-
-    {
-        size_t compression_level;
-        const char *compression_level_str = config_get("compression_level", conf);
-        if(!compression_level_str || compression_level_str[0] == '\0' || strcmp(compression_level_str, "none") == 0)
-        {
-            compression_level = 0;
-        }
-        else
-        {
-            errno = 0;
-            char* end = NULL;
-            compression_level = strtoul(compression_level_str, &end, 10);
-            if(end == compression_level_str || errno || compression_level > INT_MAX)
-            {
-                if(errno == 0)
-                {
-                    errno = EINVAL;
-                }
-                EXCEPTION_THROW(errno, "Invalid compression level \"%s\"", compression_level_str);
-                return ret;
-            }
-        }
-        ret.compression_level = (int) compression_level;
-    }
-
-    ret.file_cipher = config_get("file_cipher", conf);
-    if(ret.file_cipher)
-    {
-        if(ret.file_cipher[0] == '\0' || strcmp(ret.file_cipher, "none") == 0)
-        {
-            ret.file_cipher = NULL;
-        }
-        else
-        {
-            ret.key_digest = config_get("key_digest", conf);
-            if(!ret.key_digest || ret.key_digest[0] == '\0' || strcmp(ret.key_digest, "none") == 0)
-            {
-                EXCEPTION_THROW(EINVAL, "%s", "\"key_digest\" is not set but encryption is enabled");
-                return ret;
-            }
-        }
-    }
-    return ret;
-}
-
-void file_store(const char* src, const char* dest, const char* key, const struct config* conf)
-{
-    file_transform_info ret = get_transform_info(conf);
-    HANDLE_EXCEPTION(cleanup_exit);
-
     controller ctl;
     transformation_compress compress;
     transformation_encrypt encrypt;
@@ -177,18 +125,19 @@ void file_store(const char* src, const char* dest, const char* key, const struct
     controller_constructor(&ctl);
     HANDLE_EXCEPTION(cleanup_exit);
 
-    if(ret.compression_level > 0)
+    if(ftransform_ctx_is_compressed(ctx))
     {
-        transformation_compress_constructor((int) ret.compression_level, &compress);
+        transformation_compress_constructor((int) ctx->compression_level, &compress);
         HANDLE_EXCEPTION(cleanup_ctl);
 
         controller_add_transformation((transformation*) &compress, &ctl);
         HANDLE_EXCEPTION(cleanup_compress);
     }
 
-    if(ret.file_cipher)
+    if(ftransform_ctx_is_encrypted(ctx))
     {
-        transformation_encrypt_constructor(ret.file_cipher, ret.key_digest, key, &encrypt);
+        assert(ctx->password);
+        transformation_encrypt_constructor(ctx->cipher, ctx->key_digest, ctx->password, &encrypt);
         HANDLE_EXCEPTION(cleanup_compress);
 
         controller_add_transformation((transformation*) &encrypt, &ctl);
@@ -218,10 +167,10 @@ void file_store(const char* src, const char* dest, const char* key, const struct
     cleanup_in:
     source_destructor((source*) &in);
     cleanup_encrypt:
-    if(ret.file_cipher)
+    if(ftransform_ctx_is_encrypted(ctx))
         transformation_destructor((transformation*) &encrypt);
     cleanup_compress:
-    if(ret.compression_level > 0)
+    if(ftransform_ctx_is_compressed(ctx))
         transformation_destructor((transformation*) &compress);
     cleanup_ctl:
     controller_destructor(&ctl);
@@ -229,11 +178,8 @@ void file_store(const char* src, const char* dest, const char* key, const struct
     ((void)(0));
 }
 
-void file_extract(const char* src, const char* dest, const char* key, const struct config* conf)
+void file_extract(const char* src, const char* dest, const ftransform_ctx* ctx)
 {
-    file_transform_info ret = get_transform_info(conf);
-    HANDLE_EXCEPTION(cleanup_exit);
-
     controller ctl;
     transformation_decompress decompress;
     transformation_decrypt decrypt;
@@ -244,16 +190,17 @@ void file_extract(const char* src, const char* dest, const char* key, const stru
     controller_constructor(&ctl);
     HANDLE_EXCEPTION(cleanup_exit);
 
-    if(ret.file_cipher)
+    if(ftransform_ctx_is_encrypted(ctx))
     {
-        transformation_decrypt_constructor(ret.file_cipher, ret.key_digest, key, &decrypt);
+        assert(ctx->password);
+        transformation_decrypt_constructor(ctx->cipher, ctx->key_digest, ctx->password, &decrypt);
         HANDLE_EXCEPTION(cleanup_compress);
 
         controller_add_transformation((transformation*) &decrypt, &ctl);
         HANDLE_EXCEPTION(cleanup_encrypt);
     }
 
-    if(ret.compression_level > 0)
+    if(ftransform_ctx_is_compressed(ctx))
     {
         transformation_decompress_constructor(&decompress);
         HANDLE_EXCEPTION(cleanup_ctl);
@@ -285,10 +232,10 @@ void file_extract(const char* src, const char* dest, const char* key, const stru
     cleanup_in:
     source_destructor((source*) &in);
     cleanup_compress:
-    if(ret.compression_level > 0)
+    if(ftransform_ctx_is_compressed(ctx))
         transformation_destructor((transformation*) &decompress);
     cleanup_encrypt:
-    if(ret.file_cipher)
+    if(ftransform_ctx_is_encrypted(ctx))
         transformation_destructor((transformation*) &decrypt);
     cleanup_ctl:
     controller_destructor(&ctl);

@@ -27,7 +27,7 @@ int main()
 
     config_set("file_digest", "sha1", &config);
     config_set("key_digest", "sha1", &config);
-    config_set("file_cipher", "aes-256-cbc", &config);
+    config_set("cipher", "aes-256-cbc", &config);
     config_set("compression_level", "5", &config);
 
 
@@ -103,23 +103,118 @@ int main()
         unlink("test3");
     }
 
-    //Store and extract
+    //Store and extract (compress + encrypt)
     {
-        const char msg[] = "message";
+        ftransform_ctx ctx = ftransform_ctx_extract(&config);
+        HANDLE_EXCEPTION();
+
+        ctx.password = "mykey";
+
+        //Compress + encrypt
         {
-            FILE *f = fopen("test", "w");
-            CHECK(f);
-            size_t ret = fwrite(msg, 1, sizeof(msg) - 1, f);
-            CHECK(ret == sizeof(msg) - 1);
-            fclose(f);
+            CHECK(ftransform_ctx_is_compressed(&ctx));
+            CHECK(ftransform_ctx_is_encrypted(&ctx));
+
+            const char msg[] = "message";
+            {
+                FILE *f = fopen("test", "w");
+                CHECK(f);
+                size_t ret = fwrite(msg, 1, sizeof(msg) - 1, f);
+                CHECK(ret == sizeof(msg) - 1);
+                fclose(f);
+            }
+            file_store("test", "test_stored", &ctx);
+            HANDLE_EXCEPTION();
+
+            file_extract("test_stored", "test_out", &ctx);
+            HANDLE_EXCEPTION();
+
+            CHECK(system("diff test test_out") == 0);
+            unlink("test_stored");
+            unlink("test_out");
         }
-        file_store("test", "test_stored", "mykey", &config);
-        HANDLE_EXCEPTION();
 
-        file_extract("test_stored", "test_out", "mykey", &config);
-        HANDLE_EXCEPTION();
+        //Compress
+        {
+            ftransform_ctx new_ctx = ctx;
+            new_ctx.password = NULL;
+            new_ctx.cipher = NULL;
+            new_ctx.key_digest = NULL;
 
-        CHECK(system("diff test test_out") == 0);
+            CHECK(ftransform_ctx_is_compressed(&new_ctx));
+            CHECK(!ftransform_ctx_is_encrypted(&new_ctx));
+
+            const char msg[] = "message";
+            {
+                FILE *f = fopen("test", "w");
+                CHECK(f);
+                size_t ret = fwrite(msg, 1, sizeof(msg) - 1, f);
+                CHECK(ret == sizeof(msg) - 1);
+                fclose(f);
+            }
+            file_store("test", "test_stored", &new_ctx);
+            HANDLE_EXCEPTION();
+
+            file_extract("test_stored", "test_out", &new_ctx);
+            HANDLE_EXCEPTION();
+
+            CHECK(system("diff test test_out") == 0);
+            unlink("test_stored");
+            unlink("test_out");
+        }
+
+        //Encrypt
+        {
+            ftransform_ctx new_ctx = ctx;
+            new_ctx.compression_level = 0;
+
+            CHECK(!ftransform_ctx_is_compressed(&new_ctx));
+            CHECK(ftransform_ctx_is_encrypted(&new_ctx));
+
+            const char msg[] = "message";
+            {
+                FILE *f = fopen("test", "w");
+                CHECK(f);
+                size_t ret = fwrite(msg, 1, sizeof(msg) - 1, f);
+                CHECK(ret == sizeof(msg) - 1);
+                fclose(f);
+            }
+            file_store("test", "test_stored", &new_ctx);
+            HANDLE_EXCEPTION();
+
+            file_extract("test_stored", "test_out", &new_ctx);
+            HANDLE_EXCEPTION();
+
+            CHECK(system("diff test test_out") == 0);
+            unlink("test_stored");
+            unlink("test_out");
+        }
+
+        //Copy
+        {
+            ftransform_ctx new_ctx = {NULL, NULL, NULL, 0};
+
+            CHECK(!ftransform_ctx_is_compressed(&new_ctx));
+            CHECK(!ftransform_ctx_is_encrypted(&new_ctx));
+
+            const char msg[] = "message";
+            {
+                FILE *f = fopen("test", "w");
+                CHECK(f);
+                size_t ret = fwrite(msg, 1, sizeof(msg) - 1, f);
+                CHECK(ret == sizeof(msg) - 1);
+                fclose(f);
+            }
+            file_store("test", "test_stored", &new_ctx);
+            HANDLE_EXCEPTION();
+
+            file_extract("test_stored", "test_out", &new_ctx);
+            HANDLE_EXCEPTION();
+
+            CHECK(system("diff test test_out") == 0);
+            unlink("test_stored");
+            unlink("test_out");
+        }
     }
 
     config_destroy(&config);
