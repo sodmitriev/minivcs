@@ -10,7 +10,15 @@
 #include <sys/random.h>
 #include <sys/stat.h>
 #include <file/operations.h>
+#include <file/file_transformation_controller.h>
 #include <CTransform/CEasyException/exception.h>
+#include <CTransform/file/source_file.h>
+#include <CTransform/read_write/sink_gets.h>
+#include <CTransform/read_write/source_write.h>
+#include <CTransform/file/sink_file.h>
+#include <CTransform/read_write/sink_read.h>
+
+#define HANDLE_EXCEPTION(lable) if(EXCEPTION_IS_THROWN) goto lable; ((void)(0))
 
 struct branch_index_value
 {
@@ -30,7 +38,7 @@ struct branch_info_value
 #define __CHECK_PARAM(name)\
 if(!name) {EXCEPTION_THROW(EINVAL, "\"%s\" is not set in config", #name); return;} ((void)(0))
 
-static void branch_index_init_mode(const struct config* conf, const ftransform_ctx* ctx, struct branch_index* index, const char* mode)
+static void branch_index_construct(const struct config* conf, const ftransform_ctx* ctx, struct branch_index* index)
 {
     assert(conf);
     assert(index);
@@ -66,13 +74,6 @@ static void branch_index_init_mode(const struct config* conf, const ftransform_c
         return;
     }
 
-    FILE* file = fopen(branch_index_path, mode);
-    if(!file)
-    {
-        EXCEPTION_THROW(errno, "Failed to open file \"%s\"", branch_index_path);
-        return;
-    }
-    index->file = file;
     index->ctx = ctx;
     index->by_name = NULL;
     index->by_file = NULL;
@@ -84,7 +85,6 @@ static void branch_index_init_mode(const struct config* conf, const ftransform_c
 static void branch_index_destroy_nofiles(struct branch_index* branch_index)
 {
     assert(branch_index);
-    assert(branch_index->file);
 
     {
         struct branch_index_value *val, *tmp;
@@ -104,12 +104,7 @@ static void branch_index_destroy_nofiles(struct branch_index* branch_index)
             free(val);
         }
     }
-    if(fclose(branch_index->file) < 0)
-    {
-        EXCEPTION_THROW(errno, "%s", "Failed to close branch file");
-        return;
-    }
-    branch_index->file = NULL;
+    branch_index->path = NULL;
 }
 
 static char* gen_unique_file(const struct branch_index* index)
@@ -163,6 +158,12 @@ void branch_index_new_branch_prepared(const char* name, const char* file, struct
     if(strchr(name, ' ') || strchr(name, '\n'))
     {
         EXCEPTION_THROW(EINVAL, "branch name \"%s\" has invalid format", name);
+        return;
+    }
+
+    if(strlen(name) + strlen(file) + 2 > LINE_MAX)
+    {
+        EXCEPTION_THROW(ENAMETOOLONG, "Branch name \"%s\" exceeds length limit", name);
         return;
     }
 
@@ -226,24 +227,108 @@ void branch_index_init(const struct config* conf, const ftransform_ctx* ctx, str
 {
     assert(conf);
     assert(branch_index);
-    branch_index_init_mode(conf, ctx, branch_index, "w");
+    branch_index_construct(conf, ctx, branch_index);
     if(EXCEPTION_IS_THROWN)
     {
         return;
     }
-    file_index_init(conf, ctx, &branch_index->files);
-    if(EXCEPTION_IS_THROWN)
+
+    FILE* file = fopen(branch_index->path, "w");
+    if(!file)
     {
+        EXCEPTION_THROW(errno, "Failed to create branch file \"%s\"", branch_index->path);
         branch_index_destroy_nofiles(branch_index);
         return;
     }
+
+    file_index_init(conf, ctx, &branch_index->files);
+    if(EXCEPTION_IS_THROWN)
+    {
+        unlink(branch_index->path);
+        branch_index_destroy_nofiles(branch_index);
+        return;
+    }
+}
+
+static void branch_index_read(struct branch_index* branch_index)
+{
+    char line[LINE_MAX];
+
+    ftransform_extract_ctl ctl;
+    ftransform_extract_ctl_constructor(branch_index->ctx, &ctl);
+    HANDLE_EXCEPTION(cleanup_exit);
+
+    source_file src;
+    source_file_constructor(&src);
+    HANDLE_EXCEPTION(cleanup_ctl);
+
+    source_file_open(branch_index->path, &src);
+    HANDLE_EXCEPTION(cleanup_src);
+
+    sink_gets dest;
+    sink_gets_constructor(&dest);
+    HANDLE_EXCEPTION(cleanup_src);
+
+    controller_set_source((source*) &src, (controller*) &ctl);
+    controller_set_sink((sink*) &dest, (controller*) &ctl);
+
+    do
+    {
+        sink_gets_set(line, sizeof(line), &dest);
+        HANDLE_EXCEPTION(cleanup_dest);
+
+        controller_finalize((controller*) &ctl);
+        HANDLE_EXCEPTION(cleanup_dest);
+
+        const char *res = sink_gets_get_result(&dest);
+        if(!res)
+        {
+            break;
+        }
+
+        size_t len = strlen(res);
+        if (len && (res[len - 1] != '\n'))
+        {
+            EXCEPTION_THROW(EINVAL, "%s", "Corrupted branch index, branch record is too long!");
+            goto cleanup_dest;
+        }
+        char* val_start = strchr(line, ' ');
+        if(val_start == NULL)
+        {
+            EXCEPTION_THROW(EINVAL, "%s", "Corrupted branch index, branch record has no value!");
+            goto cleanup_dest;
+        }
+        *val_start = '\0';
+        ++val_start;
+        if(*val_start == '\0')
+        {
+            EXCEPTION_THROW(EINVAL, "%s", "Corrupted branch index, branch record has no value!");
+            goto cleanup_dest;
+        }
+        char* val_end = strchr(val_start, '\n');
+        if(val_end != NULL)
+        {
+            *val_end = '\0';
+        }
+        branch_index_new_branch_prepared(line, val_start, branch_index);
+        HANDLE_EXCEPTION(cleanup_dest);
+    } while(controller_get_stage((controller*) &ctl) != controller_stage_done);
+
+    cleanup_dest:
+    sink_destructor((sink*) &dest);
+    cleanup_src:
+    source_destructor((source*) &src);
+    cleanup_ctl:
+    ftransform_extract_ctl_destructor(&ctl);
+    cleanup_exit:
+    ((void)(0));
 }
 
 void branch_index_open(const struct config* conf, const ftransform_ctx* ctx, struct branch_index* branch_index)
 {
     assert(conf);
     assert(branch_index);
-    branch_index_init_mode(conf, ctx, branch_index, "r+");
+    branch_index_construct(conf, ctx, branch_index);
     if(EXCEPTION_IS_THROWN)
     {
         return;
@@ -255,97 +340,92 @@ void branch_index_open(const struct config* conf, const ftransform_ctx* ctx, str
         return;
     }
 
-    char line[LINE_MAX];
-    while (fgets(line, sizeof line, branch_index->file))
+    branch_index_read(branch_index);
+    if(EXCEPTION_IS_THROWN)
     {
-        size_t len = strlen(line);
-        if (len && (line[len - 1] != '\n'))
-        {
-            continue;
-        }
-        char* val_start = strchr(line, ' ');
-        if(val_start == NULL)
-        {
-            continue;
-        }
-        *val_start = '\0';
-        ++val_start;
-        if(*val_start == '\0')
-        {
-            continue;
-        }
-        char* val_end = strchr(val_start, '\n');
-        if(val_end != NULL)
-        {
-            *val_end = '\0';
-        }
-        branch_index_new_branch_prepared(line, val_start, branch_index);
-    }
-    if(ferror(branch_index->file))
-    {
-        EXCEPTION_THROW(errno, "%s", "Failed to read branch index from file");
         branch_index_destroy(branch_index);
         return;
     }
 }
 
-void branch_index_save(struct branch_index* index)
+static void branch_index_write(struct branch_index* branch_index)
 {
-    assert(index);
-    assert(index->file);
-    const char* storage = ".~branch_index";
+    ftransform_store_ctl ctl;
+    ftransform_store_ctl_constructor(branch_index->ctx, &ctl);
+    HANDLE_EXCEPTION(cleanup_exit);
 
-    if (fseek(index->file, 0, SEEK_SET) < 0)
-    {
-        EXCEPTION_THROW(errno, "%s", "Failed to rewind branch index file");
-        return;
-    }
+    source_write src;
+    source_write_constructor(&src);
+    HANDLE_EXCEPTION(cleanup_ctl);
 
-    store_file(storage, index->path);
-    if(EXCEPTION_IS_THROWN)
-    {
-        return;
-    }
+    sink_file dest;
+    sink_file_constructor(&dest);
+    HANDLE_EXCEPTION(cleanup_src);
 
-    if (truncate(index->path, 0) < 0)
-    {
-        EXCEPTION_THROW(errno, "%s", "Failed to truncate branch index file");
-        restore_file(storage, index->path);
-        return;
-    }
+    sink_file_open(branch_index->path, &dest);
+    HANDLE_EXCEPTION(cleanup_dest);
 
-    struct branch_index_value *val, *tmp;
-    for (val = index->by_name; val != NULL; val = val->hh.next)
+    controller_set_source((source*) &src, (controller*) &ctl);
+    controller_set_sink((sink*) &dest, (controller*) &ctl);
+
+    for (struct branch_index_value *val = branch_index->by_name; val != NULL; val = val->hh.next)
     {
         if(val->deleted == 0)
         {
-            if (fprintf(index->file, "%s %s\n", val->name, val->file) < 0)
-            {
-                EXCEPTION_THROW(errno, "%s", "Failed to print to branch index file");
-                restore_file(storage, index->path);
-                return;
-            }
+            source_write_set(val->name, 1, strlen(val->name), &src);
+            HANDLE_EXCEPTION(cleanup_dest);
+
+            controller_work((controller*) &ctl);
+            HANDLE_EXCEPTION(cleanup_dest);
+
+            source_write_set(" ", 1, 1, &src);
+            HANDLE_EXCEPTION(cleanup_dest);
+
+            controller_work((controller*) &ctl);
+            HANDLE_EXCEPTION(cleanup_dest);
+
+            source_write_set(val->file, 1, strlen(val->file), &src);
+            HANDLE_EXCEPTION(cleanup_dest);
+
+            controller_work((controller*) &ctl);
+            HANDLE_EXCEPTION(cleanup_dest);
+
+            source_write_set("\n", 1, 1, &src);
+            HANDLE_EXCEPTION(cleanup_dest);
+
+            controller_work((controller*) &ctl);
+            HANDLE_EXCEPTION(cleanup_dest);
         }
     }
-    if(fflush(index->file) < 0)
-    {
-        EXCEPTION_THROW(errno, "%s", "Failed to flush branch index file");
-        restore_file(storage, index->path);
-        return;
-    }
 
-    char* name = malloc(PATH_MAX + 1);
-    if(!name)
-    {
-        EXCEPTION_THROW_NOMSG(ENOMEM);
-        restore_file(storage, index->path);
-        return;
-    }
+    source_write_set(NULL, 1, 0, &src);
+    HANDLE_EXCEPTION(cleanup_dest);
+
+    controller_finalize((controller*) &ctl);
+    HANDLE_EXCEPTION(cleanup_dest);
+
+    assert(controller_get_stage((controller*) &ctl) == controller_stage_done);
+
+    cleanup_dest:
+    sink_destructor((sink*) &dest);
+    cleanup_src:
+    source_destructor((source*) &src);
+    cleanup_ctl:
+    ftransform_store_ctl_destructor(&ctl);
+    cleanup_exit:
+    ((void)(0));
+}
+
+static void branch_index_allocate_files(struct branch_index* index)
+{
+    char name[PATH_MAX + 1];
+    assert(sizeof(name) > strlen(index->branch_dir));
     strcpy(name, index->branch_dir);
     strcat(name, "/");
     char* name_end = strchr(name, '\0');
     assert(name_end);
 
+    struct branch_index_value *val, *tmp;
     HASH_ITER(hh, index->by_name, val, tmp)
     {
         if(val->deleted == 1)
@@ -373,9 +453,37 @@ void branch_index_save(struct branch_index* index)
             free(val->name);
             free(val);
             free(by_file_val);
+            EXCEPTION_CLEAR();
         }
     }
-    free(name);
+}
+
+void branch_index_save(struct branch_index* index)
+{
+    assert(index);
+    const char* storage = ".~branch_index";
+
+    store_file(storage, index->path);
+    if(EXCEPTION_IS_THROWN)
+    {
+        return;
+    }
+
+    branch_index_write(index);
+    if(EXCEPTION_IS_THROWN)
+    {
+        restore_file(storage, index->path);
+        return;
+    }
+
+    branch_index_allocate_files(index);
+    if(EXCEPTION_IS_THROWN)
+    {
+        restore_file(storage, index->path);
+        return;
+    }
+
+
     reset_storage(storage);
 }
 
@@ -439,17 +547,18 @@ void branch_index_get_names(const char** names, const struct branch_index* index
 
 static void branch_create(struct branch_info* branch)
 {
-    branch->file = fopen(branch->path, "w");
-    if(!branch->file)
+    FILE* file = fopen(branch->path, "w");
+    if(!file)
     {
         EXCEPTION_THROW(errno, "Failed to open branch file \"%s\"", branch->path);
         return;
     }
+    fclose(file);
     branch->files = NULL;
     branch->files_saved = NULL;
 }
 
-static void branch_open(struct branch_info* branch)
+static void branch_read(struct branch_info* branch)
 {
     size_t hash_size = file_index_hash_size(branch->index);
     unsigned char* hash_buf = malloc(hash_size);
@@ -464,23 +573,49 @@ static void branch_open(struct branch_info* branch)
         EXCEPTION_THROW_NOMSG(ENOMEM);
         goto cleanup_hash;
     }
-    branch->files = NULL;
-    branch->file = fopen(branch->path, "r+");
-    if(!branch->file)
+
+    assert(branch->files == NULL);
+
+    ftransform_extract_ctl ctl;
+    ftransform_extract_ctl_constructor(branch->ctx, &ctl);
+    HANDLE_EXCEPTION(cleanup_path);
+
+    source_file src;
+    source_file_constructor(&src);
+    HANDLE_EXCEPTION(cleanup_ctl);
+
+    source_file_open(branch->path, &src);
+    HANDLE_EXCEPTION(cleanup_src);
+
+    sink_gets dest_gets;
+    sink_gets_constructor(&dest_gets);
+    HANDLE_EXCEPTION(cleanup_src);
+
+    sink_read dest_read;
+    sink_read_constructor(&dest_read);
+    HANDLE_EXCEPTION(cleanup_dest_gets);
+
+    controller_set_source((source*) &src, (controller*) &ctl);
+
+    do
     {
-        EXCEPTION_THROW(errno, "Failed to open branch file \"%s\"", branch->path);
-        goto cleanup_path;
-    }
-    while(1)
-    {
-        if(fread(hash_buf, 1, hash_size, branch->file) < hash_size)
-        {
-            break;
-        }
-        if(fgets(path_buf, PATH_MAX + 1, branch->file) == NULL)
-        {
-            break;
-        }
+
+        sink_read_set(hash_buf, 1, hash_size, &dest_read);
+        HANDLE_EXCEPTION(cleanup_dest_read);
+
+        controller_set_sink((sink*) &dest_read, (controller*) &ctl);
+
+        controller_finalize((controller*) &ctl);
+        HANDLE_EXCEPTION(cleanup_dest_read);
+
+        sink_gets_set(path_buf, PATH_MAX + 1, &dest_gets);
+        HANDLE_EXCEPTION(cleanup_dest_read);
+
+        controller_set_sink((sink*) &dest_gets, (controller*) &ctl);
+
+        controller_finalize((controller*) &ctl);
+        HANDLE_EXCEPTION(cleanup_dest_read);
+
         char* nl = strchr(path_buf, '\n');
         if(nl)
         {
@@ -490,45 +625,54 @@ static void branch_open(struct branch_info* branch)
         if(!val)
         {
             EXCEPTION_THROW_NOMSG(ENOMEM);
-            branch_destroy(branch);
-            goto cleanup_path;
+            goto cleanup_dest_read;
         }
         val->hash = malloc(hash_size);
         if(!val->hash)
         {
             EXCEPTION_THROW_NOMSG(ENOMEM);
-            branch_destroy(branch);
             free(val);
-            goto cleanup_path;
+            goto cleanup_dest_read;
         }
         memcpy(val->hash, hash_buf, hash_size);
         val->path = strdup(path_buf);
         if(!val->path)
         {
             EXCEPTION_THROW_NOMSG(ENOMEM);
-            branch_destroy(branch);
             free(val->hash);
             free(val);
-            goto cleanup_path;
+            goto cleanup_dest_read;
         }
         val->next = branch->files;
         branch->files = val;
-    }
-    free(hash_buf);
-    free(path_buf);
-    if(ferror(branch->file))
-    {
-        EXCEPTION_THROW(errno, "%s", "Failed to read branch from file");
-        branch_destroy(branch);
-        return;
-    }
-    branch->files_saved = branch->files;
-    return;
+    } while(controller_get_stage((controller*) &ctl) != controller_stage_done);
 
+    cleanup_dest_read:
+    sink_destructor((sink*) &dest_gets);
+    cleanup_dest_gets:
+    sink_destructor((sink*) &dest_read);
+    cleanup_src:
+    source_destructor((source*) &src);
+    cleanup_ctl:
+    ftransform_extract_ctl_destructor(&ctl);
     cleanup_path:
     free(path_buf);
     cleanup_hash:
     free(hash_buf);
+}
+
+static void branch_open(struct branch_info* branch)
+{
+    branch->files = NULL;
+
+    branch_read(branch);
+    if(EXCEPTION_IS_THROWN)
+    {
+        branch_destroy(branch);
+        return;
+    }
+
+    branch->files_saved = branch->files;
 }
 
 void branch_index_get_branch(const char* name, struct branch_index* index, struct branch_info* branch)
@@ -602,86 +746,85 @@ static void destroy_list(struct branch_info_value* head)
     }
 }
 
-void branch_save(struct branch_info* branch)
+static void branch_write(struct branch_info* branch)
 {
-    assert(branch);
-    assert(branch->file);
-    if(branch->files_saved == branch->files)
-    {
-        return;
-    }
-    assert(branch->imported_dir || branch->files == NULL);
-    const char* storage = ".~branch";
-
-    if (fseek(branch->file, 0, SEEK_SET) < 0)
-    {
-        EXCEPTION_THROW(errno, "%s", "Failed to rewind branch file");
-        return;
-    }
-    store_file(storage, branch->path);
-    if(EXCEPTION_IS_THROWN)
-    {
-        return;
-    }
-
-    if (truncate(branch->path, 0) < 0)
-    {
-        EXCEPTION_THROW(errno, "%s", "Failed to truncate branch file");
-        restore_file(storage, branch->path);
-        return;
-    }
     size_t hash_size = file_index_hash_size(branch->index);
-    struct branch_info_value *val;
-    for (val = branch->files; val != NULL; val = val->next)
+
+    ftransform_store_ctl ctl;
+    ftransform_store_ctl_constructor(branch->ctx, &ctl);
+    HANDLE_EXCEPTION(cleanup_exit);
+
+    source_write src;
+    source_write_constructor(&src);
+    HANDLE_EXCEPTION(cleanup_ctl);
+
+    sink_file dest;
+    sink_file_constructor(&dest);
+    HANDLE_EXCEPTION(cleanup_src);
+
+    sink_file_open(branch->path, &dest);
+    HANDLE_EXCEPTION(cleanup_dest);
+
+    controller_set_source((source*) &src, (controller*) &ctl);
+    controller_set_sink((sink*) &dest, (controller*) &ctl);
+
+    for (struct branch_info_value *val = branch->files; val != NULL; val = val->next)
     {
-        if (fwrite(val->hash, 1, hash_size, branch->file) != hash_size)
-        {
-            EXCEPTION_THROW(errno, "%s", "Failed to write to branch file");
-            restore_file(storage, branch->path);
-            return;
-        }
+        source_write_set(val->hash, 1, hash_size, &src);
+        HANDLE_EXCEPTION(cleanup_dest);
+
+        controller_work((controller*) &ctl);
+        HANDLE_EXCEPTION(cleanup_dest);
+
         size_t len = strlen(val->path);
-        if (fwrite(val->path, 1, len, branch->file) != len)
-        {
-            EXCEPTION_THROW(errno, "%s", "Failed to write to branch file");
-            restore_file(storage, branch->path);
-            return;
-        }
-        if (fputc('\n', branch->file) == EOF)
-        {
-            EXCEPTION_THROW(errno, "%s", "Failed to write to branch file");
-            restore_file(storage, branch->path);
-            return;
-        }
+
+        source_write_set(val->path, 1, len, &src);
+        HANDLE_EXCEPTION(cleanup_dest);
+
+        controller_work((controller*) &ctl);
+        HANDLE_EXCEPTION(cleanup_dest);
+
+        source_write_set("\n", 1, 1, &src);
+        HANDLE_EXCEPTION(cleanup_dest);
+
+        controller_work((controller*) &ctl);
+        HANDLE_EXCEPTION(cleanup_dest);
     }
-    if(fflush(branch->file) < 0)
-    {
-        EXCEPTION_THROW(errno, "%s", "Failed to flush branch file");
-        restore_file(storage, branch->path);
-        return;
-    }
-    for (val = branch->files_saved; val != NULL; val = val->next)
+
+    source_write_set(NULL, 1, 0, &src);
+    HANDLE_EXCEPTION(cleanup_dest);
+
+    controller_finalize((controller*) &ctl);
+    HANDLE_EXCEPTION(cleanup_dest);
+
+    assert(controller_get_stage((controller*) &ctl) == controller_stage_done);
+
+    cleanup_dest:
+    sink_destructor((sink*) &dest);
+    cleanup_src:
+    source_destructor((source*) &src);
+    cleanup_ctl:
+    ftransform_store_ctl_destructor(&ctl);
+    cleanup_exit:
+    ((void)(0));
+}
+
+static void branch_update_refs(struct branch_info* branch)
+{
+    for (struct branch_info_value *val = branch->files_saved; val != NULL; val = val->next)
     {
         if(val->path[strlen(val->path) - 1] != '/')
         {
             struct file_info *info = file_index_find_by_hash(val->hash, branch->index);
-            if (EXCEPTION_IS_THROWN)
+            if(EXCEPTION_IS_THROWN)
             {
-                restore_file(storage, branch->path);
-                fprintf(stderr, "%s\n", EXCEPTION_MSG);
-                perror("Critical error, aborting to prevent data loss");
-                abort();
+                return;
             }
-            else if (!info)
-            {
-                restore_file(storage, branch->path);
-                perror("Corrupted data");
-                abort();
-            }
+            assert(info);
             file_info_remove_ref(info);
         }
     }
-    for (val = branch->files; val != NULL; val = val->next)
+    for (struct branch_info_value *val = branch->files; val != NULL; val = val->next)
     {
         if(val->path[strlen(val->path) - 1] != '/')
         {
@@ -692,53 +835,42 @@ void branch_save(struct branch_info* branch)
             }
             else if(EXCEPTION_IS_THROWN)
             {
-                restore_file(storage, branch->path);
-                fprintf(stderr, "%s\n", EXCEPTION_MSG);
-                perror("Critical error, aborting to prevent data loss");
-                abort();
+                return;
             }
             else
             {
                 info = file_index_insert(val->hash, branch->index);
                 if (EXCEPTION_IS_THROWN)
                 {
-                    restore_file(storage, branch->path);
-                    fprintf(stderr, "%s\n", EXCEPTION_MSG);
-                    perror("Critical error, aborting to prevent data loss");
-                    abort();
+                    return;
                 }
                 file_info_add_ref(info);
                 char *fname = malloc(file_get_name_length(file_index_name_size(branch->index)));
                 if(!fname)
                 {
-                    restore_file(storage, branch->path);
-                    fprintf(stderr, "%s\n", EXCEPTION_MSG);
-                    perror("Critical error, aborting to prevent data loss");
-                    abort();
+                    EXCEPTION_THROW_NOMSG(errno);
+                    return;
                 }
                 file_get_name(file_info_get_name(info), file_index_name_size(branch->index), fname);
                 if (EXCEPTION_IS_THROWN)
                 {
-                    restore_file(storage, branch->path);
-                    fprintf(stderr, "%s\n", EXCEPTION_MSG);
-                    perror("Critical error, aborting to prevent data loss");
-                    abort();
+                    free(fname);
+                    return;
                 }
                 char *full_path = malloc(strlen(val->path) + 2 + strlen(branch->imported_dir));
                 if (!full_path)
                 {
-                    restore_file(storage, branch->path);
-                    fprintf(stderr, "%s\n", EXCEPTION_MSG);
-                    perror("Critical error, aborting to prevent data loss");
-                    abort();
+                    EXCEPTION_THROW_NOMSG(errno);
+                    free(fname);
+                    return;
                 }
                 char *full_name = malloc(strlen(fname) + 2 + strlen(file_index_file_dir(branch->index)));
                 if (!full_name)
                 {
-                    restore_file(storage, branch->path);
-                    fprintf(stderr, "%s\n", EXCEPTION_MSG);
-                    perror("Critical error, aborting to prevent data loss");
-                    abort();
+                    EXCEPTION_THROW_NOMSG(errno);
+                    free(fname);
+                    free(full_path);
+                    return;
                 }
                 strcpy(full_path, branch->imported_dir);
                 strcat(full_path, "/");
@@ -749,10 +881,11 @@ void branch_save(struct branch_info* branch)
                 file_store(full_path, full_name, branch->ctx);
                 if (EXCEPTION_IS_THROWN)
                 {
-                    restore_file(storage, branch->path);
-                    fprintf(stderr, "%s\n", EXCEPTION_MSG);
-                    perror("Critical error, aborting to prevent data loss");
-                    abort();
+                    EXCEPTION_THROW_NOMSG(errno);
+                    free(fname);
+                    free(full_path);
+                    free(full_name);
+                    return;
                 }
                 free(fname);
                 free(full_path);
@@ -760,14 +893,51 @@ void branch_save(struct branch_info* branch)
             }
         }
     }
-    file_index_save(branch->index);
+}
+
+void branch_save(struct branch_info* branch)
+{
+    assert(branch);
+    if(branch->files_saved == branch->files)
+    {
+        return;
+    }
+    assert(branch->imported_dir || branch->files == NULL);
+    const char* storage = ".~branch";
+
+    store_file(storage, branch->path);
+    if(EXCEPTION_IS_THROWN)
+    {
+        return;
+    }
+
+    branch_write(branch);
     if(EXCEPTION_IS_THROWN)
     {
         restore_file(storage, branch->path);
+        return;
+    }
+
+
+    branch_update_refs(branch);
+    if(EXCEPTION_IS_THROWN)
+    {
         fprintf(stderr, "%s\n", EXCEPTION_MSG);
+        restore_file(storage, branch->path);
         perror("Critical error, aborting to prevent data loss");
         abort();
     }
+
+
+    file_index_save(branch->index);
+    if(EXCEPTION_IS_THROWN)
+    {
+        fprintf(stderr, "%s\n", EXCEPTION_MSG);
+        restore_file(storage, branch->path);
+        perror("Critical error, aborting to prevent data loss");
+        abort();
+    }
+
     reset_storage(storage);
     destroy_list(branch->files_saved);
     branch->files_saved = branch->files;
@@ -776,7 +946,6 @@ void branch_save(struct branch_info* branch)
 void branch_destroy(struct branch_info* branch)
 {
     assert(branch);
-    assert(branch->file);
     free(branch->path);
     if(branch->files_saved != branch->files)
     {
@@ -787,11 +956,7 @@ void branch_destroy(struct branch_info* branch)
     {
         free(branch->imported_dir);
     }
-    if(fclose(branch->file) < 0)
-    {
-        EXCEPTION_THROW(errno, "%s", "Failed to close branch file");
-    }
-    branch->file = NULL;
+    branch->path = NULL;
 }
 
 static void create_subdirs(char* path)

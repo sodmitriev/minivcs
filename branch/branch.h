@@ -10,7 +10,6 @@ struct branch_info_value;
 
 struct branch_index
 {
-    FILE* file;
     const ftransform_ctx* ctx;
     const char* path;
     const char* branch_dir;
@@ -26,7 +25,6 @@ struct branch_info
     char* path;
     const char* branch_dir;
     char* imported_dir;
-    FILE* file;
     struct branch_info_value* files_saved;
     struct branch_info_value* files;
     struct file_index* index;
