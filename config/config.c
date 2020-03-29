@@ -83,9 +83,14 @@ void config_save(struct config* conf)
             return;
         }
     }
+    if (fflush(conf->file) < 0)
+    {
+        EXCEPTION_THROW(errno, "%s", "Failed to flush config file");
+        return;
+    }
 }
 
-extern void config_destroy(struct config* conf)
+void config_destroy(struct config* conf)
 {
     struct config_key_value *val, *tmp;
     HASH_ITER(hh, conf->hmap, val, tmp) {

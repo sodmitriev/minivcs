@@ -15,23 +15,28 @@ int main()
     struct minivcs_project proj;
     struct branch_info;
 //    mkdir("project", S_IRWXU | S_IRWXG | S_IRWXO);
-//    minivcs_init_default("project", &proj);
+//    minivcs_generate_config("project");
 //    assert(!EXCEPTION_IS_THROWN);
+    minivcs_read_config("project/config", &proj);
+    assert(!EXCEPTION_IS_THROWN);
 
+    if(minivcs_need_password(&proj))
+        minivcs_set_password("mypass", &proj);
 
-//    minivcs_init_from_config("project/config", &proj);
+//    minivcs_init_from_config(&proj);
 //    assert(!EXCEPTION_IS_THROWN);
-//    minivcs_open("project/config", &proj);
-//    assert(!EXCEPTION_IS_THROWN);
+    minivcs_open_from_config(&proj);
+    assert(!EXCEPTION_IS_THROWN);
+
 //    minivcs_new_branch("datascience", &proj);
 //    assert(!EXCEPTION_IS_THROWN);
 //    minivcs_update("datascience", "/home/svuatoslav/datascience", &proj);
 //    assert(!EXCEPTION_IS_THROWN);
 //    minivcs_extract("datascience", "./datascience", &proj);
 //    assert(!EXCEPTION_IS_THROWN);
-//    minivcs_delete_branch("datascience", &proj);
-//    assert(!EXCEPTION_IS_THROWN);
-//    minivcs_destroy(&proj);
-//    assert(!EXCEPTION_IS_THROWN);
+    minivcs_delete_branch("datascience", &proj);
+    assert(!EXCEPTION_IS_THROWN);
+    minivcs_destroy(&proj);
+    assert(!EXCEPTION_IS_THROWN);
     return 0;
 }

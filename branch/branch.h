@@ -1,6 +1,7 @@
 #ifndef MINIVCS_BRANCH_H
 #define MINIVCS_BRANCH_H
 
+#include <file/file_transformation_context.h>
 #include "files.h"
 
 struct branch_index_value;
@@ -10,6 +11,7 @@ struct branch_info_value;
 struct branch_index
 {
     FILE* file;
+    const ftransform_ctx* ctx;
     const char* path;
     const char* branch_dir;
     struct branch_index_value* by_name;
@@ -20,6 +22,7 @@ struct branch_index
 
 struct branch_info
 {
+    const ftransform_ctx* ctx;
     char* path;
     const char* branch_dir;
     char* imported_dir;
@@ -29,9 +32,9 @@ struct branch_info
     struct file_index* index;
 };
 
-extern void branch_index_init(const struct config* conf, struct branch_index* branch_index);
+extern void branch_index_init(const struct config* conf, const ftransform_ctx* ctx, struct branch_index* branch_index);
 
-extern void branch_index_open(const struct config* conf, struct branch_index* branch_index);
+extern void branch_index_open(const struct config* conf, const ftransform_ctx* ctx, struct branch_index* branch_index);
 
 extern void branch_index_save(struct branch_index* index);
 

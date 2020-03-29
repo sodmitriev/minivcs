@@ -3,7 +3,7 @@
 #include <string.h>
 #include <errno.h>
 #include <stdlib.h>
-#include <limits.h>
+#include <zlib.h>
 
 ftransform_ctx ftransform_ctx_extract(const struct config* conf)
 {
@@ -20,7 +20,7 @@ ftransform_ctx ftransform_ctx_extract(const struct config* conf)
             errno = 0;
             char* end = NULL;
             compression_level = strtoul(compression_level_str, &end, 10);
-            if(end == compression_level_str || errno || compression_level > INT_MAX)
+            if(end == compression_level_str || errno || compression_level > Z_BEST_COMPRESSION)
             {
                 if(errno == 0)
                 {

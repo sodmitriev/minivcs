@@ -30,7 +30,7 @@ struct branch_info_value
 #define __CHECK_PARAM(name)\
 if(!name) {EXCEPTION_THROW(EINVAL, "\"%s\" is not set in config", #name); return;} ((void)(0))
 
-static void branch_index_init_mode(const struct config* conf, struct branch_index* index, const char* mode)
+static void branch_index_init_mode(const struct config* conf, const ftransform_ctx* ctx, struct branch_index* index, const char* mode)
 {
     assert(conf);
     assert(index);
@@ -73,6 +73,7 @@ static void branch_index_init_mode(const struct config* conf, struct branch_inde
         return;
     }
     index->file = file;
+    index->ctx = ctx;
     index->by_name = NULL;
     index->by_file = NULL;
     index->path = branch_index_path;
@@ -221,11 +222,11 @@ void branch_index_new_branch_prepared(const char* name, const char* file, struct
     free(name_dup);
 }
 
-void branch_index_init(const struct config* conf, struct branch_index* branch_index)
+void branch_index_init(const struct config* conf, const ftransform_ctx* ctx, struct branch_index* branch_index)
 {
     assert(conf);
     assert(branch_index);
-    branch_index_init_mode(conf, branch_index, "w");
+    branch_index_init_mode(conf, ctx, branch_index, "w");
     if(EXCEPTION_IS_THROWN)
     {
         return;
@@ -238,11 +239,11 @@ void branch_index_init(const struct config* conf, struct branch_index* branch_in
     }
 }
 
-void branch_index_open(const struct config* conf, struct branch_index* branch_index)
+void branch_index_open(const struct config* conf, const ftransform_ctx* ctx, struct branch_index* branch_index)
 {
     assert(conf);
     assert(branch_index);
-    branch_index_init_mode(conf, branch_index, "r+");
+    branch_index_init_mode(conf, ctx, branch_index, "r+");
     if(EXCEPTION_IS_THROWN)
     {
         return;
@@ -547,6 +548,7 @@ void branch_index_get_branch(const char* name, struct branch_index* index, struc
         EXCEPTION_THROW_NOMSG(ENOMEM);
         return;
     }
+    branch->ctx = index->ctx;
     strcpy(branch->path, index->branch_dir);
     strcat(branch->path, "/");
     strcat(branch->path, file);
@@ -744,7 +746,8 @@ void branch_save(struct branch_info* branch)
                 strcpy(full_name, file_index_file_dir(branch->index));
                 strcat(full_name, "/");
                 strcat(full_name, fname);
-                if (cp(full_name, full_path) < 0)
+                file_store(full_path, full_name, branch->ctx);
+                if (EXCEPTION_IS_THROWN)
                 {
                     restore_file(storage, branch->path);
                     fprintf(stderr, "%s\n", EXCEPTION_MSG);
@@ -930,9 +933,9 @@ void branch_extract(const char* dst_dir, const struct branch_info* branch)
             {
                 goto cleanup;
             }
-            if (cp(to, from) < 0)
+            file_extract(from, to, branch->ctx);
+            if(EXCEPTION_IS_THROWN)
             {
-                EXCEPTION_THROW(errno, "Failed to extract file \"%s\"", to);
                 goto cleanup;
             }
         }

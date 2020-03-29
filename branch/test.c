@@ -60,6 +60,7 @@ int is_directory_empty(char *dirname) {
 
 int main()
 {
+    ftransform_ctx ctx = {NULL, NULL, NULL, 0};
     EXCEPTION_CLEAR();
     //File index test
     {
@@ -276,7 +277,7 @@ int main()
 
         struct branch_index index;
         struct branch_index check_index;
-        branch_index_init(&conf, &index);
+        branch_index_init(&conf, &ctx, &index);
 
         branch_index_new_branch("branch1", &index);
         HANDLE_EXCEPTION();
@@ -302,7 +303,7 @@ int main()
         branch_index_save(&index);
         HANDLE_EXCEPTION();
 
-        branch_index_open(&conf, &check_index);
+        branch_index_open(&conf, &ctx, &check_index);
         HANDLE_EXCEPTION();
 
         const char* check_file1;
@@ -332,7 +333,7 @@ int main()
         branch_index_save(&index);
         HANDLE_EXCEPTION();
 
-        branch_index_open(&conf, &check_index);
+        branch_index_open(&conf, &ctx, &check_index);
         HANDLE_EXCEPTION();
 
         check_file1 = branch_index_find("branch1", &index);
@@ -406,7 +407,7 @@ int main()
         struct branch_info branch1;
         struct branch_info branch2;
         struct branch_info branch3;
-        branch_index_init(&conf, &index);
+        branch_index_init(&conf, &ctx, &index);
         HANDLE_EXCEPTION();
 
         branch_index_new_branch("empty", &index);
@@ -465,7 +466,7 @@ int main()
         branch_index_save(&index);
         HANDLE_EXCEPTION();
 
-        branch_index_open(&conf, &check_index);
+        branch_index_open(&conf, &ctx, &check_index);
         HANDLE_EXCEPTION();
 /*--------------------------------------------------------------------------------------------------------------------*/
         branch_index_get_branch("empty", &check_index, &branch1);
@@ -656,7 +657,7 @@ int main()
         branch_index_destroy(&check_index);
         HANDLE_EXCEPTION();
 /*--------------------------------------------------------------------------------------------------------------------*/
-        branch_index_open(&conf, &check_index);
+        branch_index_open(&conf, &ctx, &check_index);
         HANDLE_EXCEPTION();
 
         branch_index_get_branch("empty", &check_index, &branch1);
