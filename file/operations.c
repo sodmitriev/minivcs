@@ -1,4 +1,5 @@
 #include "operations.h"
+#include "file_transformation_controller.h"
 
 #include <errno.h>
 
@@ -10,10 +11,6 @@
 #include <CTransform/encode/transformation_b64_encode.h>
 #include <CTransform/util/transformation_replace.h>
 #include <CTransform/crypto/transformation_hash.h>
-#include <CTransform/crypto/transformation_encrypt.h>
-#include <CTransform/crypto/transformation_decrypt.h>
-#include <CTransform/compress/transformation_compress.h>
-#include <CTransform/compress/transformation_decompress.h>
 
 #include <openssl/evp.h>
 
@@ -106,46 +103,13 @@ size_t file_hash_size(const struct config* conf)
     return digest_hash_size(digest);
 }
 
-typedef struct
+static void file_transfer(const char* src, const char* dest, controller* ctl)
 {
-    int compression_level;
-    const char* key_digest;
-    const char* file_cipher;
-} file_transform_info;
-
-void file_store(const char* src, const char* dest, const ftransform_ctx* ctx)
-{
-    controller ctl;
-    transformation_compress compress;
-    transformation_encrypt encrypt;
-
     source_file in;
     sink_file out;
 
-    controller_constructor(&ctl);
-    HANDLE_EXCEPTION(cleanup_exit);
-
-    if(ftransform_ctx_is_compressed(ctx))
-    {
-        transformation_compress_constructor((int) ctx->compression_level, &compress);
-        HANDLE_EXCEPTION(cleanup_ctl);
-
-        controller_add_transformation((transformation*) &compress, &ctl);
-        HANDLE_EXCEPTION(cleanup_compress);
-    }
-
-    if(ftransform_ctx_is_encrypted(ctx))
-    {
-        assert(ctx->password);
-        transformation_encrypt_constructor(ctx->cipher, ctx->key_digest, ctx->password, &encrypt);
-        HANDLE_EXCEPTION(cleanup_compress);
-
-        controller_add_transformation((transformation*) &encrypt, &ctl);
-        HANDLE_EXCEPTION(cleanup_encrypt);
-    }
-
     source_file_constructor(&in);
-    HANDLE_EXCEPTION(cleanup_encrypt);
+    HANDLE_EXCEPTION(cleanup_exit);
 
     source_file_open(src, &in);
     HANDLE_EXCEPTION(cleanup_in);
@@ -156,89 +120,47 @@ void file_store(const char* src, const char* dest, const ftransform_ctx* ctx)
     sink_file_open(dest, &out);
     HANDLE_EXCEPTION(cleanup_out);
 
-    controller_set_source((source*) &in, &ctl);
-    controller_set_sink((sink*) &out, &ctl);
+    controller_set_source((source*) &in, (controller*) ctl);
+    controller_set_sink((sink*) &out, (controller*) ctl);
 
-    controller_finalize(&ctl);
+    controller_finalize((controller*) ctl);
     HANDLE_EXCEPTION(cleanup_out);
 
     cleanup_out:
     sink_destructor((sink*) &out);
     cleanup_in:
     source_destructor((source*) &in);
-    cleanup_encrypt:
-    if(ftransform_ctx_is_encrypted(ctx))
-        transformation_destructor((transformation*) &encrypt);
-    cleanup_compress:
-    if(ftransform_ctx_is_compressed(ctx))
-        transformation_destructor((transformation*) &compress);
+    cleanup_exit:
+    ((void)(0));
+}
+
+void file_store(const char* src, const char* dest, const ftransform_ctx* ctx)
+{
+    ftransform_store_ctl ctl;
+
+    ftransform_store_ctl_constructor(ctx, &ctl);
+    HANDLE_EXCEPTION(cleanup_exit);
+    file_transfer(src, dest, (controller*) &ctl);
+    HANDLE_EXCEPTION(cleanup_ctl);
+
     cleanup_ctl:
-    controller_destructor(&ctl);
+    ftransform_store_ctl_destructor(&ctl);
     cleanup_exit:
     ((void)(0));
 }
 
 void file_extract(const char* src, const char* dest, const ftransform_ctx* ctx)
 {
-    controller ctl;
-    transformation_decompress decompress;
-    transformation_decrypt decrypt;
+    ftransform_extract_ctl ctl;
 
-    source_file in;
-    sink_file out;
-
-    controller_constructor(&ctl);
+    ftransform_extract_ctl_constructor(ctx, &ctl);
     HANDLE_EXCEPTION(cleanup_exit);
 
-    if(ftransform_ctx_is_encrypted(ctx))
-    {
-        assert(ctx->password);
-        transformation_decrypt_constructor(ctx->cipher, ctx->key_digest, ctx->password, &decrypt);
-        HANDLE_EXCEPTION(cleanup_compress);
+    file_transfer(src, dest, (controller*) &ctl);
+    HANDLE_EXCEPTION(cleanup_ctl);
 
-        controller_add_transformation((transformation*) &decrypt, &ctl);
-        HANDLE_EXCEPTION(cleanup_encrypt);
-    }
-
-    if(ftransform_ctx_is_compressed(ctx))
-    {
-        transformation_decompress_constructor(&decompress);
-        HANDLE_EXCEPTION(cleanup_ctl);
-
-        controller_add_transformation((transformation*) &decompress, &ctl);
-        HANDLE_EXCEPTION(cleanup_compress);
-    }
-
-    source_file_constructor(&in);
-    HANDLE_EXCEPTION(cleanup_encrypt);
-
-    source_file_open(src, &in);
-    HANDLE_EXCEPTION(cleanup_in);
-
-    sink_file_constructor(&out);
-    HANDLE_EXCEPTION(cleanup_in);
-
-    sink_file_open(dest, &out);
-    HANDLE_EXCEPTION(cleanup_out);
-
-    controller_set_source((source*) &in, &ctl);
-    controller_set_sink((sink*) &out, &ctl);
-
-    controller_finalize(&ctl);
-    HANDLE_EXCEPTION(cleanup_out);
-
-    cleanup_out:
-    sink_destructor((sink*) &out);
-    cleanup_in:
-    source_destructor((source*) &in);
-    cleanup_compress:
-    if(ftransform_ctx_is_compressed(ctx))
-        transformation_destructor((transformation*) &decompress);
-    cleanup_encrypt:
-    if(ftransform_ctx_is_encrypted(ctx))
-        transformation_destructor((transformation*) &decrypt);
     cleanup_ctl:
-    controller_destructor(&ctl);
+    ftransform_extract_ctl_destructor(&ctl);
     cleanup_exit:
     ((void)(0));
 }

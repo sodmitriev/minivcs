@@ -231,7 +231,7 @@ void branch_index_init(const struct config* conf, const ftransform_ctx* ctx, str
     {
         return;
     }
-    file_index_init(conf, &branch_index->files);
+    file_index_init(conf, ctx, &branch_index->files);
     if(EXCEPTION_IS_THROWN)
     {
         branch_index_destroy_nofiles(branch_index);
@@ -248,7 +248,7 @@ void branch_index_open(const struct config* conf, const ftransform_ctx* ctx, str
     {
         return;
     }
-    file_index_open(conf, &branch_index->files);
+    file_index_open(conf, ctx, &branch_index->files);
     if(EXCEPTION_IS_THROWN)
     {
         branch_index_destroy_nofiles(branch_index);

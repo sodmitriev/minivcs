@@ -1,14 +1,24 @@
 #include "files.h"
 #include "storage.h"
+
 #include <file/operations.h>
+#include <file/file_transformation_controller.h>
+
+#include <CTransform/CEasyException/exception.h>
 #include <uthash.h>
+
 #include <assert.h>
 #include <limits.h>
 #include <sys/random.h>
 #include <dirent.h>
 #include <errno.h>
 #include <zconf.h>
-#include <CTransform/CEasyException/exception.h>
+#include <CTransform/file/source_file.h>
+#include <CTransform/read_write/sink_read.h>
+#include <CTransform/read_write/source_write.h>
+#include <CTransform/file/sink_file.h>
+
+#define HANDLE_EXCEPTION(lable) if(EXCEPTION_IS_THROWN) goto lable; ((void)(0))
 
 struct file_info
 {
@@ -62,7 +72,7 @@ static unsigned char* gen_unique_name(const struct file_index* index)
 #define __CHECK_PARAM(name)\
 if(!name) {EXCEPTION_THROW(EINVAL, "\"%s\" is not set in config", #name); return;} ((void)(0))
 
-static void file_index_init_mode(const struct config* conf, struct file_index* index, const char* mode)
+static void file_index_construct(const struct config* conf, const ftransform_ctx* ctx, struct file_index* index)
 {
     assert(conf);
     assert(index);
@@ -96,18 +106,36 @@ static void file_index_init_mode(const struct config* conf, struct file_index* i
         return;
     }
 
-    FILE* file = fopen(file_index_path, mode);
-    if(!file)
-    {
-        EXCEPTION_THROW(errno, "Failed to open file index \"%s\"", file_index_path);
-        return;
-    }
-    index->file = file;
     index->by_hash = NULL;
     index->by_name = NULL;
     index->path = file_index_path;
     index->file_dir = file_dir;
     index->conf = conf;
+    index->ctx = ctx;
+}
+
+void file_index_init(const struct config* conf, const ftransform_ctx* ctx, struct file_index* index)
+{
+    assert(conf);
+    assert(index);
+
+    file_index_construct(conf, ctx, index);
+    HANDLE_EXCEPTION(cleanup_exit);
+
+    FILE* f = fopen(index->path, "w");
+    if(!f)
+    {
+        EXCEPTION_THROW(errno, "Failed to create index file \"%s\"", index->path);
+        HANDLE_EXCEPTION(cleanup_index);
+    }
+
+    fclose(f);
+    return;
+
+    cleanup_index:
+    file_index_destroy(index);
+    cleanup_exit:
+    ((void)(0));
 }
 
 static struct file_info* file_index_insert_prepared(const unsigned char* hash, const unsigned char* name, struct file_index* index)
@@ -223,155 +251,222 @@ static struct file_info* file_index_insert_prepared(const unsigned char* hash, c
     return NULL;
 }
 
-void file_index_init(const struct config* conf, struct file_index* index)
+static void file_index_read(struct file_index* index)
 {
-    file_index_init_mode(conf, index, "w");
+    size_t hsize = file_hash_size(index->conf);
+    HANDLE_EXCEPTION(cleanup_exit);
+
+    const size_t row_size = hsize + index->name_size + sizeof(((struct file_info*)(0))->ref_count);
+
+    ftransform_extract_ctl ctl;
+    ftransform_extract_ctl_constructor(index->ctx, &ctl);
+    HANDLE_EXCEPTION(cleanup_exit);
+
+    source_file src;
+
+    source_file_constructor(&src);
+    HANDLE_EXCEPTION(cleanup_ctl);
+
+    source_file_open(index->path, &src);
+    HANDLE_EXCEPTION(cleanup_src);
+
+    sink_read dest;
+
+    sink_read_constructor(&dest);
+    HANDLE_EXCEPTION(cleanup_src);
+
+    controller_set_source((source*) &src, (controller*) &ctl);
+    controller_set_sink((sink*) &dest, (controller*) &ctl);
+
+    char* buf = malloc(row_size);
+    if(!buf)
+    {
+        EXCEPTION_THROW_NOMSG(errno);
+        HANDLE_EXCEPTION(cleanup_dest);
+    }
+
+    do
+    {
+        sink_read_set(buf, 1, row_size, &dest);
+        HANDLE_EXCEPTION(cleanup_buf);
+        controller_finalize((controller*) &ctl);
+        HANDLE_EXCEPTION(cleanup_buf);
+        if(sink_read_get_result(&dest) != row_size)
+        {
+            break;
+        }
+        size_t ref;
+        memcpy(&ref, buf + hsize + index->name_size, sizeof(ref));
+        struct file_info* info =
+                file_index_insert_prepared((unsigned char*) buf, (unsigned char*) buf + hsize, index);
+        HANDLE_EXCEPTION(cleanup_buf);
+        info->ref_count = ref;
+    } while(controller_get_stage((controller*) &ctl) != controller_stage_done);
+
+    assert(controller_get_stage((controller*) &ctl) == controller_stage_done);
+
+    cleanup_buf:
+    free(buf);
+    cleanup_dest:
+    sink_destructor((sink*) &dest);
+    cleanup_src:
+    source_destructor((source*) &src);
+    cleanup_ctl:
+    ftransform_extract_ctl_destructor(&ctl);
+    cleanup_exit:
+    ((void)(0));
 }
 
-void file_index_open(const struct config* conf, struct file_index* index)
+void file_index_open(const struct config* conf, const ftransform_ctx* ctx, struct file_index* index)
 {
     assert(conf);
     assert(index);
-    file_index_init_mode(conf, index, "r+");
-    if(EXCEPTION_IS_THROWN)
+
+    file_index_construct(conf, ctx, index);
+    HANDLE_EXCEPTION(cleanup_exit);
+
+    file_index_read(index);
+    HANDLE_EXCEPTION(cleanup_index);
+
+    return;
+
+    cleanup_index:
+    file_index_destroy(index);
+    cleanup_exit:
+    ((void)(0));
+}
+
+static void file_index_write(struct file_index* index)
+{
+    size_t hsize = file_hash_size(index->conf);
+    HANDLE_EXCEPTION(cleanup_exit);
+
+    ftransform_store_ctl ctl;
+    ftransform_store_ctl_constructor(index->ctx, &ctl);
+    HANDLE_EXCEPTION(cleanup_exit);
+
+    source_write src;
+
+    source_write_constructor(&src);
+    HANDLE_EXCEPTION(cleanup_ctl);
+
+    sink_file dest;
+
+    sink_file_constructor(&dest);
+    HANDLE_EXCEPTION(cleanup_src);
+
+    sink_file_open(index->path, &dest);
+    HANDLE_EXCEPTION(cleanup_dest);
+
+    controller_set_source((source*) &src, (controller*) &ctl);
+    controller_set_sink((sink*) &dest, (controller*) &ctl);
+
+    for (struct file_index_value_by_name *val = index->by_name; val != NULL; val = val->hh.next)
     {
-        return;
-    }
-    size_t hsize = file_hash_size(conf);
-    if(EXCEPTION_IS_THROWN)
-    {
-        file_index_destroy(index);
-        return;
-    }
-    const size_t row_size = hsize + index->name_size + sizeof(((struct file_info*)(0))->ref_count);
-    unsigned char* buf = malloc(row_size);
-    if(!buf)
-    {
-        EXCEPTION_THROW_NOMSG(ENOMEM);
-        file_index_destroy(index);
-        return;
-    }
-    while(fread(buf, 1, row_size, index->file) == row_size)
-    {
-        size_t ref;
-        memcpy(&ref, buf + hsize + index->name_size, sizeof(ref));
-        struct file_info* info = file_index_insert_prepared(buf, buf + hsize, index);
-        if(EXCEPTION_IS_THROWN)
+        if(val->value->ref_count > 0)
         {
-            file_index_destroy(index);
-            free(buf);
-            return;
+            source_write_set(val->value->hash, 1, hsize, &src);
+            HANDLE_EXCEPTION(cleanup_dest);
+
+            controller_work((controller*) &ctl);
+            HANDLE_EXCEPTION(cleanup_dest);
+
+            source_write_set(val->value->name, 1, index->name_size, &src);
+            HANDLE_EXCEPTION(cleanup_dest);
+
+            controller_work((controller*) &ctl);
+            HANDLE_EXCEPTION(cleanup_dest);
+
+            source_write_set(&val->value->ref_count, sizeof(val->value->ref_count), 1, &src);
+            HANDLE_EXCEPTION(cleanup_dest);
+
+            controller_work((controller*) &ctl);
+            HANDLE_EXCEPTION(cleanup_dest);
         }
-        info->ref_count = ref;
     }
-    free(buf);
-    if(ferror(index->file))
+
+    source_write_set(NULL, 1, 0, &src);
+    controller_finalize((controller*) &ctl);
+    HANDLE_EXCEPTION(cleanup_dest);
+
+    assert(controller_get_stage((controller*) &ctl) == controller_stage_done);
+
+    cleanup_dest:
+    sink_destructor((sink*) &dest);
+    cleanup_src:
+    source_destructor((source*) &src);
+    cleanup_ctl:
+    ftransform_store_ctl_destructor(&ctl);
+    cleanup_exit:
+    ((void)(0));
+}
+
+static void file_index_allocate_files(struct file_index* index)
+{
+    size_t dir_path_len = strlen(index->file_dir);
+    char* name = malloc(FILENAME_MAX + dir_path_len + 2);
+    if(!name)
     {
-        EXCEPTION_THROW(errno, "%s", "Failed to write to file index");
-        file_index_destroy(index);
+        EXCEPTION_THROW_NOMSG(errno);
         return;
     }
+    strcpy(name, index->file_dir);
+    strcat(name, "/");
+    for (struct file_index_value_by_name *val = index->by_name; val != NULL; val = val->hh.next)
+    {
+        name[dir_path_len + 1] = '\0';
+        strcat(name, val->name);
+        if (access(name, F_OK) >= 0)
+        {
+            if (val->value->ref_count == 0)
+            {
+                unlink(name);
+            }
+        }
+        else if (errno == ENOENT)
+        {
+            if (val->value->ref_count > 0)
+            {
+                FILE *f = fopen(name, "w");
+                if (f)
+                {
+                    fclose(f);
+                }
+            }
+        }
+    }
+    free(name);
 }
 
 void file_index_save(struct file_index* index)
 {
-    assert(index);
-    assert(index->file);
-    size_t hsize = file_hash_size(index->conf);
-    if(EXCEPTION_IS_THROWN)
-    {
-        return;
-    }
     const char* storage = ".~file_index";
-
-    if (fseek(index->file, 0, SEEK_SET) < 0)
-    {
-        EXCEPTION_THROW(errno, "%s", "Failed to rewind file index");
-        return;
-    }
-
     store_file(storage, index->path);
     if(EXCEPTION_IS_THROWN)
     {
         return;
     }
 
-    if (truncate(index->path, 0) < 0)
+    file_index_write(index);
+    if(EXCEPTION_IS_THROWN)
     {
-        EXCEPTION_THROW(errno, "%s", "Failed to truncate file index file");
-        restore_file(storage, index->path);
-        return;
-    }
-
-    struct file_index_value_by_name *val;
-    for (val = index->by_name; val != NULL; val = val->hh.next)
-    {
-        if(val->value->ref_count > 0)
-        {
-            if (fwrite(val->value->hash, 1, hsize, index->file) != hsize)
-            {
-                EXCEPTION_THROW(errno, "%s", "Failed to write to file index file");
-                restore_file(storage, index->path);
-                return;
-            }
-            if (fwrite(val->value->name, 1, index->name_size, index->file) != index->name_size)
-            {
-                EXCEPTION_THROW(errno, "%s", "Failed to write to file index file");
-                restore_file(storage, index->path);
-                return;
-            }
-            if (fwrite(&val->value->ref_count, sizeof(val->value->ref_count), 1, index->file) != 1)
-            {
-                EXCEPTION_THROW(errno, "%s", "Failed to write to file index file");
-                restore_file(storage, index->path);
-                return;
-            }
-        }
-    }
-    if(fflush(index->file) < 0)
-    {
-        EXCEPTION_THROW(errno, "%s", "Failed to flush file index file");
         restore_file(storage, index->path);
         return;
     }
     reset_storage(storage);
-    size_t dir_path_len = strlen(index->file_dir);
-    char* name = malloc(FILENAME_MAX + dir_path_len + 2);
-    if(name)
+    file_index_allocate_files(index);
+    if(EXCEPTION_IS_THROWN)
     {
-        strcpy(name, index->file_dir);
-        strcat(name, "/");
-        for (val = index->by_name; val != NULL; val = val->hh.next)
-        {
-            name[dir_path_len + 1] = '\0';
-            strcat(name, val->name);
-            if (access(name, F_OK) >= 0)
-            {
-                if (val->value->ref_count == 0)
-                {
-                    unlink(name);
-                }
-            }
-            else if (errno == ENOENT)
-            {
-                if (val->value->ref_count > 0)
-                {
-                    FILE *f = fopen(name, "w");
-                    if (f)
-                    {
-                        fclose(f);
-                    }
-                }
-            }
-        }
-        free(name);
-    } //else leave the garbage, nothing will break
+        //This step is optional
+        //If it fails, garbage will be left but nothing will break
+        //But it's VERY unlikely to fail
+        EXCEPTION_CLEAR();
+    }
 }
 
 void file_index_destroy(struct file_index* index)
 {
     assert(index);
-    assert(index->file);
 
     {
         struct file_index_value_by_name *val, *tmp;
@@ -394,11 +489,7 @@ void file_index_destroy(struct file_index* index)
             free(val);
         }
     }
-    if(fclose(index->file) < 0)
-    {
-        EXCEPTION_THROW(errno, "%s", "Failed to close index file file descriptor");
-    }
-    index->file = NULL;
+    index->path = NULL;
 }
 
 struct file_info* file_index_find_by_hash(const unsigned char *hash, const struct file_index *index)

@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <config/config.h>
+#include <file/file_transformation_context.h>
 
 struct file_index_value_by_hash;
 
@@ -11,7 +12,7 @@ struct file_index_value_by_name;
 struct file_index
 {
     const struct config* conf;
-    FILE* file;
+    const ftransform_ctx* ctx;
     const char* path;
     const char* file_dir;
     struct file_index_value_by_hash* by_hash;
@@ -23,9 +24,9 @@ struct file_info;
 
 
 
-extern void file_index_init(const struct config* conf, struct file_index* index);
+extern void file_index_init(const struct config* conf, const ftransform_ctx* ctx, struct file_index* index);
 
-extern void file_index_open(const struct config* conf, struct file_index* index);
+extern void file_index_open(const struct config* conf, const ftransform_ctx* ctx, struct file_index* index);
 
 extern void file_index_save(struct file_index* index);
 
