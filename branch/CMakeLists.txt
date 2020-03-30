@@ -8,4 +8,4 @@ add_library(branch branch.h branch.c)
 target_link_libraries(branch files sink_gets)
 
 add_executable(branch_test test.c files.h files.c branch.h branch.c storage.h storage.c)
-target_link_libraries(branch_test config file_operations)
+target_link_libraries(branch_test config file_operations sink_gets)

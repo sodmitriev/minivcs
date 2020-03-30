@@ -74,7 +74,7 @@ int main()
         mkdir(FILE_DIR, S_IRWXU | S_IRWXG | S_IRWXO);
 
         struct file_index index;
-        file_index_init(&conf, &index);
+        file_index_init(&conf, &ctx, &index);
         HANDLE_EXCEPTION();
 
         FILE *f = fopen("tmp1", "w");
@@ -143,7 +143,7 @@ int main()
         HANDLE_EXCEPTION();
 
         struct file_index new_index;
-        file_index_open(&conf, &new_index);
+        file_index_open(&conf, &ctx, &new_index);
         HANDLE_EXCEPTION();
         assert(file_index_find_by_hash(hash1, &new_index) == NULL);
         HANDLE_EXCEPTION();
@@ -191,7 +191,7 @@ int main()
         file_index_save(&index);
         HANDLE_EXCEPTION();
 
-        file_index_open(&conf, &new_index);
+        file_index_open(&conf, &ctx, &new_index);
         HANDLE_EXCEPTION();
         struct file_info *tmp;
         tmp = file_index_find_by_hash(hash1, &new_index);
@@ -227,7 +227,7 @@ int main()
         file_index_save(&index);
         HANDLE_EXCEPTION();
 
-        file_index_open(&conf, &new_index);
+        file_index_open(&conf, &ctx, &new_index);
         HANDLE_EXCEPTION();
         assert(file_index_find_by_hash(hash1, &new_index) == NULL);
         HANDLE_EXCEPTION();

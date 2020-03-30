@@ -608,6 +608,11 @@ static void branch_read(struct branch_info* branch)
         controller_finalize((controller*) &ctl);
         HANDLE_EXCEPTION(cleanup_dest_read);
 
+        if(controller_get_stage((controller*) &ctl) == controller_stage_done)
+        {
+            break;
+        }
+
         sink_gets_set(path_buf, PATH_MAX + 1, &dest_gets);
         HANDLE_EXCEPTION(cleanup_dest_read);
 
