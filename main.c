@@ -193,6 +193,11 @@ void set_password(struct minivcs_project* project)
             return;
         }
 
+        if(password[strlen(password) - 1] == '\n')
+        {
+            password[strlen(password) - 1] = '\0';
+        }
+
         minivcs_set_password(password, project);
 
         if(tcsetattr(fileno(stdin), TCSANOW, &saved) < 0)
