@@ -74,14 +74,10 @@ void config_save(struct config* conf)
         EXCEPTION_THROW(errno, "%s", "Failed to rewind config file");
         return;
     }
-    struct config_key_value *val;
-    for (val = conf->hmap; val != NULL; val = val->hh.next)
+    config_print(conf->file, conf);
+    if(EXCEPTION_IS_THROWN)
     {
-        if (fprintf(conf->file, "%s %s\n", val->key, val->value) < 0)
-        {
-            EXCEPTION_THROW(errno, "%s", "Failed to write to config file");
-            return;
-        }
+        return;
     }
     if (fflush(conf->file) < 0)
     {
@@ -156,4 +152,16 @@ const char* config_get(const char* key, const struct config* conf)
         return NULL;
     }
     return val->value;
+}
+
+void config_print(FILE* out, struct config* conf)
+{
+    for (struct config_key_value *val = conf->hmap; val != NULL; val = val->hh.next)
+    {
+        if (fprintf(out, "%s %s\n", val->key, val->value) < 0)
+        {
+            EXCEPTION_THROW(errno, "%s", "Failed to write to config file");
+            return;
+        }
+    }
 }

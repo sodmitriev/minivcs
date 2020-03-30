@@ -25,4 +25,8 @@ extern void config_set(const char* key, const char* value, struct config* conf);
 
 extern const char* config_get(const char* key, const struct config* conf);
 
+
+
+extern void config_print(FILE* out, struct config* conf);
+
 #endif //MINIVCS_CONFIG_H

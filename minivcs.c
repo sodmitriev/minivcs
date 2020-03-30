@@ -8,6 +8,9 @@
 #include <string.h>
 #include <CEasyException/exception.h>
 #include <assert.h>
+#include <libgen.h>
+
+static const char* def_config_path = "config";
 
 struct branch_info_list
 {
@@ -20,7 +23,7 @@ strcpy(path_end, dir);                                                  \
 if(mkdir(path, S_IRWXU | S_IRWXG | S_IRWXO) < 0 && errno != EEXIST)     \
 {                                                                       \
     EXCEPTION_THROW(errno, "Failed to create directory \"%s\"", path);  \
-    goto cleanup;                                                       \
+    return;                                                             \
 }                                                                       \
 ((void)(0))
 
@@ -76,46 +79,63 @@ static void create_subdirs(char* path)
 void minivcs_generate_config(const char* metadata_path)
 {
     struct config conf;
-    char* path = malloc(PATH_MAX + 1);
+    if(strlen(metadata_path) + 1 + strlen(def_config_path) > PATH_MAX)
+    {
+        EXCEPTION_THROW(ENAMETOOLONG, "Project path is too long: \"%s\"", metadata_path);
+        return;
+    }
+    char path[PATH_MAX + 1];
     strcpy(path, metadata_path);
     char* path_end = strchr(path, '\0');
     *path_end = '/';
     ++path_end;
     INIT_DEFAULT_MKDIR("branches");
     INIT_DEFAULT_MKDIR("files");
-    strcpy(path_end, "config");
+    strcpy(path_end, def_config_path);
     config_init(path, &conf);
     if(EXCEPTION_IS_THROWN)
     {
+        return;
+    }
+    
+    char real_path[PATH_MAX + 1];
+    if(realpath(path, real_path) == NULL)
+    {
+        EXCEPTION_THROW_NOMSG(errno);
         goto cleanup;
     }
-    strcpy(path_end, "branches/index");
-    INIT_DEFAULT_CONFIG_SET("branch_index_path", path);
-    strcpy(path_end, "branches");
-    INIT_DEFAULT_CONFIG_SET("branch_dir", path);
+    char* dir_path = dirname(real_path);
+    char* dir_path_end = strchr(dir_path, '\0');
+    *dir_path_end = '/';
+    ++dir_path_end;
+    
+    strcpy(dir_path_end, "branches/index");
+    INIT_DEFAULT_CONFIG_SET("branch_index_path", dir_path);
+    strcpy(dir_path_end, "branches");
+    INIT_DEFAULT_CONFIG_SET("branch_dir", dir_path);
     INIT_DEFAULT_CONFIG_SET("branch_digest", "sha1");
     INIT_DEFAULT_CONFIG_SET("branch_name_len", "32");
-    strcpy(path_end, "files/index");
-    INIT_DEFAULT_CONFIG_SET("file_index_path", path);
-    strcpy(path_end, "files");
-    INIT_DEFAULT_CONFIG_SET("file_dir", path);
+    strcpy(dir_path_end, "files/index");
+    INIT_DEFAULT_CONFIG_SET("file_index_path", dir_path);
+    strcpy(dir_path_end, "files");
+    INIT_DEFAULT_CONFIG_SET("file_dir", dir_path);
     INIT_DEFAULT_CONFIG_SET("file_digest", "sha1");
     INIT_DEFAULT_CONFIG_SET("file_name_len", "32");
     INIT_DEFAULT_CONFIG_SET("cipher", "none");
     INIT_DEFAULT_CONFIG_SET("key_digest", "none");
     INIT_DEFAULT_CONFIG_SET("compression_level", "5");
     config_save(&conf);
-    config_destroy(&conf);
-
+    
     cleanup:
-    free(path);
+    config_destroy(&conf);
 }
 
-void minivcs_read_config(const char* config_path, struct minivcs_project* project)
+void minivcs_read_config(const char* metadata_path, struct minivcs_project* project)
 {
-    config_load(config_path, &project->conf);
+    minivcs_read_config_only(metadata_path, &project->conf);
     if(EXCEPTION_IS_THROWN)
     {
+        config_destroy(&project->conf);
         return;
     }
     project->ctx = ftransform_ctx_extract(&project->conf);
@@ -125,6 +145,21 @@ void minivcs_read_config(const char* config_path, struct minivcs_project* projec
         return;
     }
     project->index_loaded = false;
+}
+
+void minivcs_read_config_only(const char* metadata_path, struct config* conf)
+{
+    char* config_path = malloc(strlen(metadata_path) + 1 + strlen(def_config_path) + 1);
+    if(!config_path)
+    {
+        EXCEPTION_THROW_NOMSG(errno);
+        return;
+    }
+    strcpy(config_path, metadata_path);
+    strcat(config_path, "/");
+    strcat(config_path, def_config_path);
+    config_load(config_path, conf);
+    free(config_path);
 }
 
 bool minivcs_need_password(struct minivcs_project* project)

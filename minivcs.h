@@ -13,7 +13,9 @@ struct minivcs_project
 
 extern void minivcs_generate_config(const char* metadata_path);
 
-extern void minivcs_read_config(const char* config_path, struct minivcs_project* project);
+extern void minivcs_read_config(const char* metadata_path, struct minivcs_project* project);
+
+extern void minivcs_read_config_only(const char* metadata_path, struct config* conf);
 
 extern bool minivcs_need_password(struct minivcs_project* project);
 

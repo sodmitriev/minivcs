@@ -32,8 +32,8 @@ int main()
 //    assert(!EXCEPTION_IS_THROWN);
 //    minivcs_update("datascience", "/home/svuatoslav/datascience", &proj);
 //    assert(!EXCEPTION_IS_THROWN);
-//    minivcs_extract("datascience", "./datascience", &proj);
-//    assert(!EXCEPTION_IS_THROWN);
+    minivcs_extract("datascience", "./datascience", &proj);
+    assert(!EXCEPTION_IS_THROWN);
     minivcs_delete_branch("datascience", &proj);
     assert(!EXCEPTION_IS_THROWN);
     minivcs_destroy(&proj);
