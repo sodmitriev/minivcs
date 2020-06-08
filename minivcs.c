@@ -63,11 +63,15 @@ static size_t digest_hash_size(const char* digest)
 
 static void create_subdirs(char* path)
 {
-    while(*path == '/')
+    if(*path == '0')
+    {
+        return;
+    }
+    while(*path == '/' && *(path + 1) == '/')
     {
         ++path;
     }
-    for(char* pos = strchr(path, '/'); pos != NULL; pos = strchr(pos + 1, '/'))
+    for(char* pos = strchr(path + 1, '/'); pos != NULL; pos = strchr(pos + 1, '/'))
     {
         *pos = '\0';
         struct stat file_stat;
