@@ -30,6 +30,7 @@ struct branch_index_value
 
 #define FILE_TYPE_REGULAR 0
 #define FILE_TYPE_DIRECTORY 1
+#define FILE_TYPE_SYMLINK 2
 
 struct branch_info_value
 {
@@ -1129,11 +1130,39 @@ void branch_extract(const char* dst_dir, const struct branch_info* branch)
                 break;
             case FILE_TYPE_DIRECTORY:
                 *to_end = '\0';
-                strcat(to_end, val->path);
+                strncat(to_end, val->path, strlen(val->path) - 1); //All except '*' in the end
                 create_subdirs(to);
                 if (EXCEPTION_IS_THROWN)
                 {
                     goto cleanup;
+                }
+                break;
+            case FILE_TYPE_SYMLINK:
+                {
+                    const char *symlink_start = strchr(val->path, '*') + 1;
+                    *to_end = '\0';
+                    strncat(to_end, val->path, symlink_start - val->path - 1);
+                    if(symlink(symlink_start, to) < 0)
+                    {
+                        if(errno == EEXIST)
+                        {
+                            if(unlink(to) < 0)
+                            {
+                                EXCEPTION_THROW_NOMSG(errno);
+                                goto cleanup;
+                            }
+                            if(symlink(symlink_start, to) < 0)
+                            {
+                                EXCEPTION_THROW(errno, "Failed to create symlink from \"%s\" to \"%s\"", symlink_start, to);
+                                goto cleanup;
+                            }
+                        }
+                        else
+                        {
+                            EXCEPTION_THROW(errno, "Failed to create symlink from \"%s\" to \"%s\"", symlink_start, to);
+                            goto cleanup;
+                        }
+                    }
                 }
                 break;
             default:
@@ -1171,7 +1200,7 @@ static void branch_put_dir(struct branch_info* branch, struct branch_info_value*
         empty = 0;
         dir_end[1] = '\0';
         strcat(src_dir, dirent->d_name);
-        int err = stat(src_dir, &file_stat);
+        int err = lstat(src_dir, &file_stat);
         if(err < 0)
         {
             EXCEPTION_THROW(errno, "Failed to stat file \"%s\"", src_dir);
@@ -1179,6 +1208,7 @@ static void branch_put_dir(struct branch_info* branch, struct branch_info_value*
             closedir(dir);
             return;
         }
+
         if(S_ISREG(file_stat.st_mode))
         {
             char* namedup = strdup(src_dir + orig_len + 1);
@@ -1227,31 +1257,78 @@ static void branch_put_dir(struct branch_info* branch, struct branch_info_value*
         {
             branch_put_dir(branch, htab, src_dir, orig_len);
         }
+        else if(S_ISLNK(file_stat.st_mode))
+        {
+            char lnk_dst[PATH_MAX + 2];
+            {
+                ssize_t res = readlink(src_dir, lnk_dst, sizeof(lnk_dst));
+                if(res < 0)
+                {
+                    *dir_end = '\0';
+                    EXCEPTION_THROW_NOMSG(errno);
+                    return;
+                }
+                if(res > PATH_MAX)
+                {
+                    *dir_end = '\0';
+                    EXCEPTION_THROW(ENAMETOOLONG, "Filename \"%s\" is too long", src_dir);
+                    return;
+                }
+                lnk_dst[res] = '\0';
+            }
+            char* namedup;
+            size_t src_len = strlen(src_dir + orig_len + 1);
+            size_t dst_len = strlen(lnk_dst);
+            namedup = malloc(src_len + dst_len + 2);
+            if(!namedup)
+            {
+                *dir_end = '\0';
+                EXCEPTION_THROW_NOMSG(errno);
+                return;
+            }
+            namedup[0] = '\0';
+            strcat(namedup, src_dir + orig_len + 1);
+            strcat(namedup, "*");
+            strcat(namedup, lnk_dst);
+            unsigned char* fhash = malloc(hash_size);
+            if(!fhash)
+            {
+                *dir_end = '\0';
+                free(namedup);
+                EXCEPTION_THROW_NOMSG(errno);
+                return;
+            }
+            memset(fhash, 0, hash_size);
+            struct branch_info_value* val = malloc(sizeof(struct branch_info_value));
+            if(!val)
+            {
+                *dir_end = '\0';
+                free(namedup);
+                free(fhash);
+                EXCEPTION_THROW_NOMSG(errno);
+                return;
+            }
+            val->hash = fhash;
+            val->type = FILE_TYPE_SYMLINK;
+            val->path = namedup;
+            val->next = *htab;
+            *htab = val;
+        }
     }
     closedir(dir);
     if(empty)
     {
-        dir_end[1] = '\0';
-        char* namedup;
-        if(*(src_dir + orig_len + 1) == '\0')
-        {
-            namedup = strdup("/");
-        }
-        else
-        {
-            namedup = strdup(src_dir + orig_len + 1);
-        }
+        size_t dir_name_len = strlen(src_dir + orig_len + 1);
+        char* namedup = malloc( dir_name_len + 2);
         if(!namedup)
         {
             *dir_end = '\0';
             EXCEPTION_THROW_NOMSG(errno);
             return;
         }
-        if(namedup[0] == '\0')
-        {
-            namedup[0] = '/';
-            namedup[1] = '\0';
-        }
+        namedup[0] = '\0';
+        strcat(namedup, src_dir + orig_len + 1);
+        strcat(namedup, "*");
         unsigned char* fhash = malloc(hash_size);
         if(!fhash)
         {
