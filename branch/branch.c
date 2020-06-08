@@ -28,9 +28,13 @@ struct branch_index_value
     UT_hash_handle hh;
 };
 
+#define FILE_TYPE_REGULAR 0
+#define FILE_TYPE_DIRECTORY 1
+
 struct branch_info_value
 {
     unsigned char* hash;
+    uint8_t type;
     char* path;
     struct branch_info_value* next;
 };
@@ -567,6 +571,7 @@ static void branch_read(struct branch_info* branch)
         EXCEPTION_THROW_NOMSG(ENOMEM);
         return;
     }
+    uint8_t file_type;
     char* path_buf = malloc(PATH_MAX + 1);
     if(!path_buf)
     {
@@ -613,6 +618,19 @@ static void branch_read(struct branch_info* branch)
             break;
         }
 
+        sink_read_set(&file_type, 1, sizeof(file_type), &dest_read);
+        HANDLE_EXCEPTION(cleanup_dest_read);
+
+        controller_set_sink((sink*) &dest_read, (controller*) &ctl);
+
+        controller_finalize((controller*) &ctl);
+        HANDLE_EXCEPTION(cleanup_dest_read);
+
+        if(controller_get_stage((controller*) &ctl) == controller_stage_done)
+        {
+            break;
+        }
+
         sink_gets_set(path_buf, PATH_MAX + 1, &dest_gets);
         HANDLE_EXCEPTION(cleanup_dest_read);
 
@@ -640,6 +658,7 @@ static void branch_read(struct branch_info* branch)
             goto cleanup_dest_read;
         }
         memcpy(val->hash, hash_buf, hash_size);
+        val->type = file_type;
         val->path = strdup(path_buf);
         if(!val->path)
         {
@@ -781,6 +800,12 @@ static void branch_write(struct branch_info* branch)
         controller_work((controller*) &ctl);
         HANDLE_EXCEPTION(cleanup_dest);
 
+        source_write_set(&val->type, 1, sizeof(val->type), &src);
+        HANDLE_EXCEPTION(cleanup_dest);
+
+        controller_work((controller*) &ctl);
+        HANDLE_EXCEPTION(cleanup_dest);
+
         size_t len = strlen(val->path);
 
         source_write_set(val->path, 1, len, &src);
@@ -818,7 +843,7 @@ static void branch_update_refs(struct branch_info* branch)
 {
     for (struct branch_info_value *val = branch->files_saved; val != NULL; val = val->next)
     {
-        if(val->path[strlen(val->path) - 1] != '/')
+        if(val->type == FILE_TYPE_REGULAR)
         {
             struct file_info *info = file_index_find_by_hash(val->hash, branch->index);
             if(EXCEPTION_IS_THROWN)
@@ -831,7 +856,7 @@ static void branch_update_refs(struct branch_info* branch)
     }
     for (struct branch_info_value *val = branch->files; val != NULL; val = val->next)
     {
-        if(val->path[strlen(val->path) - 1] != '/')
+        if(val->type == FILE_TYPE_REGULAR)
         {
             struct file_info *info = file_index_find_by_hash(val->hash, branch->index);
             if (info && !EXCEPTION_IS_THROWN)
@@ -1053,61 +1078,67 @@ void branch_extract(const char* dst_dir, const struct branch_info* branch)
             EXCEPTION_THROW(ENAMETOOLONG, "%s", "Destination path is too long");
             goto cleanup;
         }
-        if(val->path[strlen(val->path) - 1] == '/')
+        switch(val->type)
         {
-            *to_end = '\0';
-            strcat(to_end, val->path);
-            create_subdirs(to);
-            if (EXCEPTION_IS_THROWN)
-            {
+            case FILE_TYPE_REGULAR:
+                {
+                    struct file_info *info = file_index_find_by_hash(val->hash, branch->index);
+                    if (EXCEPTION_IS_THROWN)
+                    {
+                        goto cleanup;
+                    }
+                    else if(!info)
+                    {
+                        EXCEPTION_THROW(ENOENT, "%s", "Data is corrupted, file hash is not found in file index");
+                        goto cleanup;
+                    }
+                    char *orig_name = malloc(file_get_name_length(file_index_name_size(branch->index)));
+                    if(!orig_name)
+                    {
+                        EXCEPTION_THROW_NOMSG(ENOMEM);
+                        goto cleanup;
+                    }
+                    file_get_name(file_info_get_name(info), file_index_name_size(branch->index), orig_name);
+                    if (EXCEPTION_IS_THROWN)
+                    {
+                        free(orig_name);
+                        goto cleanup;
+                    }
+                    if (from_dir_path_len + 1 + strlen(orig_name) > PATH_MAX)
+                    {
+                        free(orig_name);
+                        EXCEPTION_THROW(ENAMETOOLONG, "%s", "Destination path is too long");
+                        goto cleanup;
+                    }
+                    *to_end = '\0';
+                    *from_end = '\0';
+                    strcat(to_end, val->path);
+                    strcat(from_end, orig_name);
+                    free(orig_name);
+                    create_subdirs(to);
+                    if (EXCEPTION_IS_THROWN)
+                    {
+                        goto cleanup;
+                    }
+                    file_extract(from, to, branch->ctx);
+                    if(EXCEPTION_IS_THROWN)
+                    {
+                        goto cleanup;
+                    }
+                }
+                break;
+            case FILE_TYPE_DIRECTORY:
+                *to_end = '\0';
+                strcat(to_end, val->path);
+                create_subdirs(to);
+                if (EXCEPTION_IS_THROWN)
+                {
+                    goto cleanup;
+                }
+                break;
+            default:
+                EXCEPTION_THROW(ENOTSUP, "Unknown file type %d", val->type);
                 goto cleanup;
-            }
-        }
-        else
-        {
-            struct file_info *info = file_index_find_by_hash(val->hash, branch->index);
-            if (EXCEPTION_IS_THROWN)
-            {
-                goto cleanup;
-            }
-            else if(!info)
-            {
-                EXCEPTION_THROW(ENOENT, "%s", "Data is corrupted, file hash is not found in file index");
-                goto cleanup;
-            }
-            char *orig_name = malloc(file_get_name_length(file_index_name_size(branch->index)));
-            if(!orig_name)
-            {
-                EXCEPTION_THROW_NOMSG(ENOMEM);
-                goto cleanup;
-            }
-            file_get_name(file_info_get_name(info), file_index_name_size(branch->index), orig_name);
-            if (EXCEPTION_IS_THROWN)
-            {
-                free(orig_name);
-                goto cleanup;
-            }
-            if (from_dir_path_len + 1 + strlen(orig_name) > PATH_MAX)
-            {
-                free(orig_name);
-                EXCEPTION_THROW(ENAMETOOLONG, "%s", "Destination path is too long");
-                goto cleanup;
-            }
-            *to_end = '\0';
-            *from_end = '\0';
-            strcat(to_end, val->path);
-            strcat(from_end, orig_name);
-            free(orig_name);
-            create_subdirs(to);
-            if (EXCEPTION_IS_THROWN)
-            {
-                goto cleanup;
-            }
-            file_extract(from, to, branch->ctx);
-            if(EXCEPTION_IS_THROWN)
-            {
-                goto cleanup;
-            }
         }
     }
 
@@ -1187,6 +1218,7 @@ static void branch_put_dir(struct branch_info* branch, struct branch_info_value*
                 return;
             }
             val->hash = fhash;
+            val->type = FILE_TYPE_REGULAR;
             val->path = namedup;
             val->next = *htab;
             *htab = val;
@@ -1239,6 +1271,7 @@ static void branch_put_dir(struct branch_info* branch, struct branch_info_value*
             return;
         }
         val->hash = fhash;
+        val->type = FILE_TYPE_DIRECTORY;
         val->path = namedup;
         val->next = *htab;
         *htab = val;
