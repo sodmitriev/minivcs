@@ -16,5 +16,8 @@ add_subdirectory(file)
 add_subdirectory(config)
 add_subdirectory(branch)
 
-add_executable(minivcs minivcs.h minivcs.c main.c)
-target_link_libraries(minivcs branch)
+add_library(minivcs_project minivcs.h minivcs.c)
+target_link_libraries(minivcs_project branch)
+
+add_executable(minivcs main.c)
+target_link_libraries(minivcs minivcs_project)
